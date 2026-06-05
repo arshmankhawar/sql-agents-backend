@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# Environment — never commit secrets
+.env
+.env.local
+
+# Generated artifacts (recreate with setup commands)
+schema_index/
+static/
+db/*.db
+
+# Claude Code internal
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-check:
+    name: Lint & Import Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install ruff (linter)
+        run: pip install ruff
+
+      - name: Lint — style & error checks
+        # E: pycodestyle errors  F: pyflakes (undefined names, unused imports)
+        # W: warnings            ignore E501: line-too-long (handled by formatter)
+        run: ruff check . --select E,F,W --ignore E501
+
+      - name: Verify core module imports
+        # Catches broken imports without needing a real API key or database.
+        # GROQ_API_KEY is set to a placeholder so config.py doesn't raise on import.
+        run: |
+          python -c "from config import GROQ_MODEL; print('config OK')"
+          python -c "from agents.derived_agent import compute_derived; print('derived_agent OK')"
+          python -c "from agents.synthesis_agent import SynthesisAgent; print('synthesis_agent OK')"
+          python -c "from planner.task_planner import TaskNode, validate_dag; print('task_planner OK')"
+          python -c "from planner.parent_planner import ParentOrchestrator; print('parent_planner OK')"
+          python -c "from dag.executor import DAGExecutor; print('dag.executor OK')"
+          python -c "from api.app import app; print('api.app OK')"
+        env:
+          GROQ_API_KEY: ci-placeholder
+
+      - name: Run pure-Python unit tests (no API key required)
+        # Only runs tests that exercise in-memory logic — no DB, no LLM calls.
+        run: python -m pytest test_schema.py -v --tb=short
+        env:
+          GROQ_API_KEY: ci-placeholder
+          SQLITE_DB_PATH: ./db
+
+  # ── Integration tests (require secrets) ─────────────────────────────────────
+  # Uncomment and add GROQ_API_KEY to repo secrets to enable end-to-end tests.
+  #
+  # integration:
+  #   name: Integration Tests
+  #   runs-on: ubuntu-latest
+  #   needs: lint-and-check
+  #   if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: actions/setup-python@v5
+  #       with:
+  #         python-version: "3.11"
+  #         cache: pip
+  #     - run: pip install -r requirements.txt
+  #     - run: python db/setup_sqlite.py
+  #     - run: python main.py --build-index
+  #     - run: python -m pytest test_*.py -v --tb=short
+  #       env:
+  #         GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+  #         SQLITE_DB_PATH: ./db

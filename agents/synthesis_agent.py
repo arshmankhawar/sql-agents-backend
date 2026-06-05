@@ -1,0 +1,151 @@
+"""
+agents/synthesis_agent.py — Natural Language Answer Synthesis.
+
+Takes the raw SQL results already in memory (from SQL/derived tasks) and
+produces a single human-readable paragraph that directly answers the user's
+original question using the actual numbers from the database.
+
+This is the final step of the pipeline — it never touches the DB.
+"""
+
+import logging
+from typing import Any
+
+from langchain_groq import ChatGroq
+from langchain_core.messages import HumanMessage, SystemMessage
+
+from config import GROQ_API_KEY, GROQ_MODEL
+from planner.task_planner import TaskNode
+
+logger = logging.getLogger(__name__)
+
+_SYNTHESIS_SYSTEM_PROMPT = """\
+You are a data analyst who communicates SQL query results in plain English.
+
+You will be given:
+1. The user's original question.
+2. A structured summary of the data retrieved from real database tables.
+
+Your job: Write a clear, insightful paragraph (3-6 sentences) that directly answers the
+question using the specific numbers from the data. Mention actual values, comparisons,
+and any notable findings. Do not hedge with "it seems" or "the data suggests" — state
+the facts directly as they appear in the data.
+"""
+
+
+def _format_data_for_synthesis(
+    tasks: list[TaskNode],
+    results: dict[str, Any],
+) -> str:
+    """
+    Build a human-readable data summary from task results.
+
+    Prefers derived (aggregated) rows over raw SQL rows for conciseness.
+    Falls back to raw SQL rows if no derived result exists.
+    """
+    sections: list[str] = []
+
+    # Collect derived results first (they contain aggregated values that are
+    # more useful for synthesis), then fall back to SQL results.
+    derived_ids = {t.id for t in tasks if t.task_type == "derived"}
+    sql_ids = {t.id for t in tasks if t.task_type == "sql"}
+
+    # Map each SQL task to its derived descendant (if one exists).
+    sql_to_derived: dict[str, str] = {}
+    for t in tasks:
+        if t.task_type == "derived" and t.depends_on:
+            for dep in t.depends_on:
+                if dep in sql_ids:
+                    sql_to_derived[dep] = t.id
+
+    presented: set[str] = set()
+
+    for task in tasks:
+        if task.task_type not in ("sql", "derived"):
+            continue
+
+        # For SQL tasks that have a derived child, let the derived result speak.
+        if task.task_type == "sql" and task.id in sql_to_derived:
+            continue
+
+        result = results.get(task.id)
+        if not result:
+            continue
+
+        rows = result.get("rows", [])
+        if not rows:
+            continue
+
+        if task.id in presented:
+            continue
+        presented.add(task.id)
+
+        # Build a readable table header
+        domain_label = f"[{task.domain}] " if task.domain not in ("default", "global") else ""
+        label = f"{domain_label}{task.description}"
+        sections.append(f"--- {label} ---")
+
+        # Show all rows (they're already aggregated if derived, or raw if SQL)
+        for row in rows:
+            line_parts = [f"{k}: {v}" for k, v in row.items()]
+            sections.append("  " + ", ".join(line_parts))
+
+        sections.append("")  # blank line between sections
+
+    return "\n".join(sections) if sections else "(no data available)"
+
+
+class SynthesisAgent:
+    """
+    Generates a natural language answer from in-memory SQL/derived results.
+    Never queries the database.
+    """
+
+    def __init__(self):
+        self._llm: ChatGroq | None = None
+
+    @property
+    def llm(self) -> ChatGroq:
+        if self._llm is None:
+            self._llm = ChatGroq(
+                api_key=GROQ_API_KEY,
+                model=GROQ_MODEL,
+                temperature=0.3,
+                max_tokens=512,
+            )
+        return self._llm
+
+    async def synthesize(
+        self,
+        user_request: str,
+        tasks: list[TaskNode],
+        results: dict[str, Any],
+    ) -> str:
+        """
+        Generate a natural language paragraph answering the user's question.
+
+        Args:
+            user_request: The original user question.
+            tasks:        All TaskNodes from the pipeline.
+            results:      Map of task_id -> result dict (already in memory).
+
+        Returns:
+            A plain-English paragraph with the answer.
+        """
+        data_summary = _format_data_for_synthesis(tasks, results)
+
+        user_message = (
+            f'User question: "{user_request}"\n\n'
+            f"Data retrieved from the database:\n{data_summary}"
+        )
+
+        messages = [
+            SystemMessage(content=_SYNTHESIS_SYSTEM_PROMPT),
+            HumanMessage(content=user_message),
+        ]
+
+        logger.info("[SynthesisAgent] Generating natural language answer...")
+        response = await self.llm.ainvoke(messages)
+        answer = response.content.strip()
+        logger.info("[SynthesisAgent] Answer generated (%d chars)", len(answer))
+        return answer
