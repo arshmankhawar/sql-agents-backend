@@ -28,7 +28,6 @@ import os
 import textwrap
 import time
 from dataclasses import dataclass, field
-from typing import Any
 
 from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -45,7 +44,7 @@ from schema.indexer import MOCK_SCHEMAS
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _wrap(text: str, width: int = 66, indent: str = "  ") -> str:
-    return "\n".join(indent + l for l in textwrap.wrap(text, width=width))
+    return "\n".join(indent + line for line in textwrap.wrap(text, width=width))
 
 
 def _line(char: str = "-", width: int = 70) -> None:
@@ -113,7 +112,8 @@ async def _baseline_agent(idx: int, domain: str, task: str, result: BaselineResu
     try:
         resp = await llm.ainvoke(msgs)
         sql = resp.content.strip().replace("```sql","").replace("```","").strip()
-        if not sql.endswith(";"): sql += ";"
+        if not sql.endswith(";"):
+            sql += ";"
         rows = await execute_query(sql, domain)
     except Exception as e:
         sql, rows = f"-- ERROR: {e}", []
@@ -209,9 +209,12 @@ async def run_improved(query: str, flush_cache: bool = True) -> ImprovedResult:
             continue
         r = exec_results.get(t.id, {})
         src = r.get("source", "")
-        if src == "owner":      result.db_calls += 1
-        elif src == "cache":    result.cache_hits += 1
-        elif src == "subscriber": result.subscribers += 1
+        if src == "owner":
+            result.db_calls += 1
+        elif src == "cache":
+            result.cache_hits += 1
+        elif src == "subscriber":
+            result.subscribers += 1
         result.schema_tokens += r.get("schema_tokens", 0)
 
     result.answer = await SynthesisAgent().synthesize(query, tasks, exec_results)
@@ -254,8 +257,6 @@ def _print_summary(b: BaselineResult, m: ImprovedResult, label: str) -> None:
     tok_saved = b.schema_tokens - m.schema_tokens
     tok_pct   = (tok_saved / b.schema_tokens * 100) if b.schema_tokens else 0
     time_diff = b.elapsed_ms - m.elapsed_ms
-    time_pct  = (time_diff / b.elapsed_ms * 100) if b.elapsed_ms else 0
-
     faster = "IMPROVED" if time_diff > 0 else "BASELINE"
     print(f"\n  {label}")
     print(f"  DB calls     {b.db_calls:>4} baseline  vs {m.db_calls:>3} improved  "
@@ -308,7 +309,8 @@ async def main() -> None:
 """)
 
     os.environ["DB_LATENCY_MS"] = "0"
-    import db.pool as _pool; _pool._DB_LATENCY_MS = 0.0
+    import db.pool as _pool
+    _pool._DB_LATENCY_MS = 0.0
 
     _sub("BASELINE  (isolated agents, full schema, no deduplication)")
     b1 = await run_baseline(query, tasks)

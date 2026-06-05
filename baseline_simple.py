@@ -71,7 +71,7 @@ class SimpleBaselineAgent:
     def _generate_sql(self, task: str) -> str:
         """Use LLM to generate SQL from FULL schema."""
         full_schema = self._full_schema_context()
-        
+
         system_prompt = """\
 You are a SQL query writer. Given a task and the full database schema, generate SQL.
 Output ONLY the raw SQL statement.
@@ -94,19 +94,19 @@ Output ONLY the raw SQL statement.
     async def run(self, task: str) -> dict[str, Any]:
         """Execute task with NO blackboard coordination."""
         logger.info("[%s] Task: %r", self.agent_id, task)
-        
+
         t0 = time.perf_counter()
-        
+
         # Step 1: Always generate SQL from full schema
         sql = self._generate_sql(task)
         logger.info("[%s] Generated SQL: %.60r", self.agent_id, sql)
-        
+
         # Step 2: Always execute directly (no deduplication, no caching)
         self.db_query_count += 1
         rows = await execute_query(sql, domain=self.domain)
-        
+
         elapsed_ms = (time.perf_counter() - t0) * 1000
-        
+
         return {
             "agent_id": self.agent_id,
             "task": task,
@@ -130,30 +130,30 @@ class SimpleBaselineOrchestrator:
     async def run_tasks(self, tasks: list[tuple[str, str]]) -> dict[str, Any]:
         """
         Run a list of (task_description, sql_query) tuples concurrently.
-        
+
         Args:
             tasks: List of (description, sql) tuples.
-            
+
         Returns:
             Aggregated metrics and results.
         """
         self.agents = [SimpleBaselineAgent(domain=self.domain) for _ in range(len(tasks))]
-        
+
         logger.info("[Baseline] Spawning %d agents to run %d tasks concurrently", len(self.agents), len(tasks))
-        
+
         t0 = time.perf_counter()
-        
+
         results = await asyncio.gather(
             *[agent.run(task) for agent, (task, _) in zip(self.agents, tasks)],
             return_exceptions=False,
         )
-        
+
         elapsed_ms = (time.perf_counter() - t0) * 1000
-        
+
         # Aggregate metrics
         total_db_queries = sum(1 for _ in results)  # Each agent always queries DB once
         total_schema_tokens = sum(r["schema_tokens"] for r in results)
-        
+
         return {
             "system": "baseline_simple",
             "elapsed_ms": elapsed_ms,

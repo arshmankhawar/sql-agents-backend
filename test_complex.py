@@ -1,5 +1,4 @@
 import asyncio
-import json
 import time
 
 async def run_complex_test():
@@ -13,7 +12,7 @@ async def run_complex_test():
         "top 10 customers per region, customer contribution percentages, month-over-month growth, "
         "customer rankings, and generate charts for all results."
     )
-    
+
     print("\n" + "=" * 80)
     print("  COMPLEX DEPENDENCY TEST")
     print(f"  Request: {user_request}")
@@ -31,10 +30,13 @@ async def run_complex_test():
     derived_count = 0
     plot_count = 0
     for task in tasks:
-        if task.task_type == "sql": sql_count += 1
-        elif task.task_type == "derived": derived_count += 1
-        elif task.task_type == "plot": plot_count += 1
-        
+        if task.task_type == "sql":
+            sql_count += 1
+        elif task.task_type == "derived":
+            derived_count += 1
+        elif task.task_type == "plot":
+            plot_count += 1
+
         deps = f" [depends: {task.depends_on}]" if task.depends_on else ""
         print(f"    [{task.task_type.upper()}] {task.id}: {task.description}{deps}")
         if task.operation:
@@ -48,16 +50,20 @@ async def run_complex_test():
     results = await executor.execute(tasks)
     exec_ms = (time.perf_counter() - t1) * 1000
 
-    print(f"\n▶ Phase 3: Results")
+    print("\n▶ Phase 3: Results")
     db_executions = 0
     cache_hits = 0
     derived_hits = 0
-    
+
     for task_id, result in results.items():
-        if result.get("source") == "owner": db_executions += 1
-        elif result.get("source") == "cache": cache_hits += 1
-        elif result.get("source") == "derived": derived_hits += 1
-        elif result.get("source") == "subscriber": cache_hits += 1 # functionally same for this metric
+        if result.get("source") == "owner":
+            db_executions += 1
+        elif result.get("source") == "cache":
+            cache_hits += 1
+        elif result.get("source") == "derived":
+            derived_hits += 1
+        elif result.get("source") == "subscriber":
+            cache_hits += 1
 
     print(f"  Total Tasks Created:        {len(tasks)}")
     print(f"  SQL Tasks:                  {sql_count}")
@@ -67,7 +73,7 @@ async def run_complex_test():
     print(f"  Cache/Subscriber Hits:      {cache_hits}")
     print(f"  Derived Operations Run:     {derived_hits}")
     print(f"  Execution Time:             {exec_ms:.0f}ms")
-    
+
     await close_redis()
 
 if __name__ == "__main__":

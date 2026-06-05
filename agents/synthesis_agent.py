@@ -47,7 +47,6 @@ def _format_data_for_synthesis(
 
     # Collect derived results first (they contain aggregated values that are
     # more useful for synthesis), then fall back to SQL results.
-    derived_ids = {t.id for t in tasks if t.task_type == "derived"}
     sql_ids = {t.id for t in tasks if t.task_type == "sql"}
 
     # Map each SQL task to its derived descendant (if one exists).
