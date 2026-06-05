@@ -47,11 +47,12 @@ jobs:
           GROQ_API_KEY: ci-placeholder
 
       - name: Run pure-Python unit tests (no API key required)
-        # Only runs tests that exercise in-memory logic — no DB, no LLM calls.
-        run: python -m pytest test_schema.py -v --tb=short
+        # Validates the derived_agent aggregation logic — the pure-Python arithmetic
+        # (group_avg, group_sum) that the whole pipeline depends on. No DB, LLM, or
+        # FAISS needed, so it runs deterministically on every push.
+        run: python ci_tests.py
         env:
           GROQ_API_KEY: ci-placeholder
-          SQLITE_DB_PATH: ./db
 
   # ── Integration tests (require secrets) ─────────────────────────────────────
   # Uncomment and add GROQ_API_KEY to repo secrets to enable end-to-end tests.
