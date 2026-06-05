@@ -5,7 +5,6 @@ Test cache hit behaviour:
   - Second run = cache hit (zero DB calls).
 """
 import asyncio
-import sys
 
 async def main():
     from agents.base_agent import run_with_blackboard

@@ -29,7 +29,6 @@ t1 and t2 run in parallel. t3 waits for both.
 
 import json
 import logging
-import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -207,10 +206,10 @@ class ChildTaskPlanner:
             raw_id = str(item.get("id", f"t{len(nodes)+1}"))
             # Prefix the ID with the domain to avoid collisions when merging DAGs
             domain_id = f"{self.domain}_{raw_id}"
-            
+
             # Also update depends_on to use the prefixed IDs
             depends_on = [f"{self.domain}_{str(d)}" for d in item.get("depends_on", [])]
-            
+
             nodes.append(TaskNode(
                 id=domain_id,
                 description=str(item.get("description", "unknown task")),

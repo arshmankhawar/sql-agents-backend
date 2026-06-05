@@ -30,7 +30,6 @@ Run modes:
 
 import argparse
 import asyncio
-import json
 import logging
 import sys
 import time
@@ -100,7 +99,7 @@ async def run_dedup_demo() -> None:
         sources[src] = sources.get(src, 0) + 1
         print(f"  {r['agent_id']:<20} source={src:<12} rows={r['row_count']:<5} {r['elapsed_ms']:.0f}ms")
 
-    print(f"\n── Summary ──────────────────────────────────────────────────────────")
+    print("\n── Summary ──────────────────────────────────────────────────────────")
     print(f"  DB executions:  {sources.get('owner', 0)}  (should be 1)")
     print(f"  Subscribers:    {sources.get('subscriber', 0)}")
     print(f"  Cache hits:     {sources.get('cache', 0)}")

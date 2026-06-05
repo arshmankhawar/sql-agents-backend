@@ -16,7 +16,6 @@ The index is saved to disk so subsequent startups just load it.
 
 import json
 import logging
-import os
 from pathlib import Path
 from typing import Any
 
@@ -152,12 +151,12 @@ def build_index() -> None:
     model = SentenceTransformer(EMBEDDING_MODEL)
 
     base_out_dir = Path(SCHEMA_INDEX_PATH)
-    
+
     for domain in MOCK_SCHEMAS.keys():
         schema_defs = _get_schema_defs(domain)
         if not schema_defs:
             continue
-            
+
         texts = [_table_to_text(t) for t in schema_defs]
 
         logger.info("[Schema][%s] Embedding %d tables...", domain, len(texts))

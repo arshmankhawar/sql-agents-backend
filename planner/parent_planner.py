@@ -10,7 +10,6 @@ If cross-domain comparison is needed, it adds a final global task.
 import asyncio
 import json
 import logging
-from typing import Any
 
 from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage, SystemMessage

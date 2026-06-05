@@ -10,7 +10,6 @@ No real Redis used here — we instantiate _InMemoryRedis directly.
 """
 
 import asyncio
-import time
 
 from blackboard.client import _InMemoryRedis
 

@@ -135,7 +135,7 @@ class DAGExecutor:
         elif task.task_type == "derived":
             from agents.derived_agent import compute_derived
             from blackboard.result_cache import cache_set
-            
+
             result = compute_derived(task, prior_results)
             # Store the result in Blackboard so PlotAgent can find it via query_hash
             await cache_set(result["query_hash"], result)

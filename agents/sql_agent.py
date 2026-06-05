@@ -138,7 +138,7 @@ class SQLAgent:
         # Step 1: Retrieve relevant schema (not the full schema!)
         schema_context = self._retriever.format_schema_context(task)
         logger.debug("[%s] Schema context:\n%s", self.agent_id, schema_context[:400])
-        
+
         # Count schema tokens (rough estimate: ~4 chars per token)
         schema_tokens = len(schema_context) // 4
 
@@ -147,7 +147,7 @@ class SQLAgent:
 
         # Step 3: Execute via Blackboard (handles deduplication, caching, coordination)
         result = await run_with_blackboard(self.agent_id, task, sql, domain=self.domain)
-        
+
         # Add schema tokens to result for metrics tracking
         result["schema_tokens"] = schema_tokens
 

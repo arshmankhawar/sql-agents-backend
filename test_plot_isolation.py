@@ -5,7 +5,6 @@ Test plot agent never queries the DB:
   - Verify plot_agent never calls execute_query.
 """
 import asyncio
-from unittest.mock import patch
 
 async def main():
     from agents.base_agent import run_with_blackboard

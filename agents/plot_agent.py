@@ -15,7 +15,6 @@ Supported chart types (generated from shared SQL results):
   - table (raw tabular data)
 """
 
-import json
 import logging
 from typing import Any
 
