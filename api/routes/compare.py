@@ -38,6 +38,13 @@ async def _run_comparison(query: str, mode: int, q: asyncio.Queue) -> None:
     from comparison_demo import BaselineResult, run_baseline, run_improved
     from planner.parent_planner import ParentOrchestrator
     from planner.task_planner import validate_dag
+    from utils.logging_config import new_request_id
+
+    new_request_id()
+    logger.info(
+        "[Compare] compare_received",
+        extra={"phase": "received", "query": query, "mode": mode},
+    )
 
     step = 0
 
@@ -87,6 +94,17 @@ async def _run_comparison(query: str, mode: int, q: asyncio.Queue) -> None:
         db_saved = baseline.db_calls - improved.db_calls
         tok_saved = baseline.schema_tokens - improved.schema_tokens
         time_diff = baseline.elapsed_ms - improved.elapsed_ms
+
+        logger.info(
+            "[Compare] comparison_complete",
+            extra={
+                "phase": "comparison_complete",
+                "mode": mode,
+                "db_calls_saved": db_saved,
+                "schema_tokens_saved": tok_saved,
+                "time_diff_ms": round(time_diff),
+            },
+        )
 
         q.put_nowait({
             "event": "comparison_complete",
