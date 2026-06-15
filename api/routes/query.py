@@ -45,10 +45,17 @@ async def _run_pipeline_into_queue(user_request: str, q: asyncio.Queue) -> None:
     from agents.synthesis_agent import SynthesisAgent
     from dag.executor import DAGExecutor
     from planner.parent_planner import ParentOrchestrator
+    from utils.logging_config import new_request_id
+
+    request_id = new_request_id()
+    logger.info(
+        "[Pipeline] query_received",
+        extra={"phase": "received", "query": user_request},
+    )
 
     t_plan_start = _time.perf_counter()
     try:
-        q.put_nowait({"event": "planning_started", "ts": _time.time()})
+        q.put_nowait({"event": "planning_started", "ts": _time.time(), "request_id": request_id})
 
         planner = ParentOrchestrator()
         tasks = await planner.plan_global_dag(user_request)
@@ -63,6 +70,15 @@ async def _run_pipeline_into_queue(user_request: str, q: asyncio.Queue) -> None:
         })
 
         plan_ms = (_time.perf_counter() - t_plan_start) * 1000
+        logger.info(
+            "[Pipeline] planning_complete",
+            extra={
+                "phase": "planning_complete",
+                "domains": domains,
+                "task_count": len(tasks),
+                "plan_ms": round(plan_ms),
+            },
+        )
         q.put_nowait({
             "event": "planning_complete",
             "ts": _time.time(),
@@ -83,6 +99,10 @@ async def _run_pipeline_into_queue(user_request: str, q: asyncio.Queue) -> None:
         executor = DAGExecutor()
         results = await executor.execute(tasks, event_queue=q)
         exec_ms = (_time.perf_counter() - t_exec_start) * 1000
+        logger.info(
+            "[Pipeline] execution_complete",
+            extra={"phase": "execution_complete", "exec_ms": round(exec_ms)},
+        )
 
         q.put_nowait({"event": "synthesis_started", "ts": _time.time()})
         t_synth_start = _time.perf_counter()
@@ -105,6 +125,16 @@ async def _run_pipeline_into_queue(user_request: str, q: asyncio.Queue) -> None:
         db_calls = sum(1 for r in sql_results if r.get("source") == "owner")
         cache_hits = sum(1 for r in sql_results if r.get("source") == "cache")
 
+        logger.info(
+            "[Pipeline] synthesis_complete",
+            extra={
+                "phase": "synthesis_complete",
+                "synth_ms": round(synth_ms),
+                "total_ms": round(plan_ms + exec_ms + synth_ms),
+                "db_calls": db_calls,
+                "cache_hits": cache_hits,
+            },
+        )
         q.put_nowait({
             "event": "synthesis_complete",
             "ts": _time.time(),
@@ -127,6 +157,7 @@ async def _run_pipeline_into_queue(user_request: str, q: asyncio.Queue) -> None:
             "ts": _time.time(),
             "message": str(exc),
             "phase": "pipeline",
+            "request_id": request_id,
         })
     finally:
         q.put_nowait(None)  # sentinel — generator will stop

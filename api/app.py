@@ -25,10 +25,11 @@ from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from fastapi.responses import FileResponse  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
-)
+from utils.logging_config import configure_logging  # noqa: E402
+
+# Structured + correlated logging: human-readable console (pm2 logs) plus a JSON
+# rotating file at logs/pipeline.log. Every log line carries the request_id.
+configure_logging(level=logging.INFO)
 logger = logging.getLogger("api.app")
 
 

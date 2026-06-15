@@ -19,6 +19,9 @@ schema_index/
 static/
 db/*.db
 
+# Runtime logs
+logs/
+
 # Claude Code internal
 .claude/
 
