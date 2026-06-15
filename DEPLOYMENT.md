@@ -1,9 +1,8 @@
 # DEPLOYMENT.md — Backend (sql-agents-backend)
 
-> **For the Claude Code deployment session:** Read this file fully before taking any
-> action. It contains everything needed to deploy this FastAPI backend to DigitalOcean,
-> including project-specific gotchas that are NOT obvious from the code. The user is new
-> to deployment — explain steps as you go and confirm before incurring any cost.
+> **Read this file fully before deploying.** It contains everything needed to deploy
+> this FastAPI backend to DigitalOcean, including project-specific gotchas that are NOT
+> obvious from the code.
 
 ---
 
@@ -178,5 +177,6 @@ python db/setup_sqlite.py        # one-time: build SQLite DBs
 python main.py --build-index     # one-time: build FAISS index
 python server.py                 # dev server on :8000 (reload on)
 ```
-On Windows prefix with `PYTHONIOENCODING=utf-8`. See `CLAUDE.md` in this repo for the full
-architecture (planning → DAG execution → Blackboard → synthesis).
+On Windows prefix with `PYTHONIOENCODING=utf-8`. See `README.md` and
+`docs/ARCHITECTURE_DIAGRAM.md` for the full architecture
+(planning → DAG execution → Blackboard → synthesis).

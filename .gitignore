@@ -22,9 +22,6 @@ db/*.db
 # Runtime logs
 logs/
 
-# Claude Code internal
-.claude/
-
 # OS
 .DS_Store
 Thumbs.db
