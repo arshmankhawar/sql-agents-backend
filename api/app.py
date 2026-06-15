@@ -51,12 +51,22 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
+# Allowed CORS origins. The deployed frontend origin is supplied via the
+# FRONTEND_ORIGIN env var so no code change is needed across environments.
+_frontend_origin = os.getenv("FRONTEND_ORIGIN", "")
+_allowed_origins = [
+    o
+    for o in [
         "http://localhost:5173",  # Vite dev
         "http://localhost:4173",  # Vite preview
-    ],
+        _frontend_origin,  # deployed frontend (e.g. https://arshman.techquest.ai)
+    ]
+    if o
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_allowed_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],

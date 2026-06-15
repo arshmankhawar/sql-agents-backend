@@ -66,6 +66,12 @@ class _InMemoryRedis:
         if key in self._store:
             self._expiry[key] = time.monotonic() + seconds
 
+    async def flushdb(self) -> None:
+        # Clear all keys/TTLs (mirrors Redis FLUSHDB). Pub/Sub subscriptions
+        # are left intact, matching real Redis semantics.
+        self._store.clear()
+        self._expiry.clear()
+
     async def publish(self, channel: str, message: str) -> int:
         queues = self._pubsubs.get(channel, [])
         for q in queues:
