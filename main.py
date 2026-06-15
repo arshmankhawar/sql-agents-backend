@@ -75,8 +75,8 @@ async def run_dedup_demo() -> None:
 
     # All 5 agents want the same data — only 1 should hit the DB.
     # agent_delta uses different whitespace/casing but same semantics → same hash.
-    SQL = "SELECT * FROM employees;"
-    SQL_VARIANT = "select  *  from  employees ;"  # normalises to same hash
+    SQL = "SELECT * FROM airport_employees;"
+    SQL_VARIANT = "select  *  from  airport_employees ;"  # normalises to same hash
 
     agents = [
         ("agent_alpha",   SQL),

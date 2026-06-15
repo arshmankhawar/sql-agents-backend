@@ -274,10 +274,10 @@ def _print_summary(b: BaselineResult, m: ImprovedResult, label: str) -> None:
 SCENARIO = {
     "query": "Compare the average employee salary between tech_startup and airport.",
     "agent_tasks": [
-        ("tech_startup", "fetch employee_id, name, department, salary from employees"),
-        ("tech_startup", "fetch employee_id, name, department, salary from employees"),  # duplicate
-        ("airport",      "fetch employee_id, name, department, salary from employees"),
-        ("airport",      "fetch employee_id, name, department, salary from employees"),  # duplicate
+        ("tech_startup", "fetch employee_id, name, department, salary from tech_startup_employees"),
+        ("tech_startup", "fetch employee_id, name, department, salary from tech_startup_employees"),  # duplicate
+        ("airport",      "fetch employee_id, name, department, salary from airport_employees"),
+        ("airport",      "fetch employee_id, name, department, salary from airport_employees"),  # duplicate
     ],
     "n_unique": 2,
 }

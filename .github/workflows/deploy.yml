@@ -53,8 +53,16 @@ jobs:
           export PATH=/root/.nvm/versions/node/v24.11.0/bin:$PATH
           cd /root/sql-agents-backend
           venv/bin/pip install -q -r requirements.txt
-          # First-run safety nets — recreate gitignored artifacts if absent
-          [ -f db/airport.db ] || PYTHONIOENCODING=utf-8 venv/bin/python db/setup_sqlite.py
+          # Seed / migrate the unified database. setup_sqlite.py creates
+          # db/analytics.db and removes any legacy per-domain db files. When the
+          # unified DB is (re)created, also rebuild the FAISS index so it matches
+          # the current (view-based) schema. This block also performs the one-time
+          # migration from the old three-file layout.
+          if [ ! -f db/analytics.db ]; then
+            PYTHONIOENCODING=utf-8 venv/bin/python db/setup_sqlite.py
+            PYTHONIOENCODING=utf-8 venv/bin/python main.py --build-index
+          fi
+          # First-run safety net — build the schema index if it is missing.
           [ -d schema_index ] || PYTHONIOENCODING=utf-8 venv/bin/python main.py --build-index
           pm2 restart sql-agents-api --update-env
           REMOTE

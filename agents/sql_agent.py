@@ -59,13 +59,13 @@ Rules:
 - Use standard SQLite syntax (no YEAR(), no ::cast, no schema-qualified names).
 - End the query with a semicolon.
 
-Examples:
-- Task: "fetch employee_id, name, department, salary from employees"
-  → SELECT employee_id, name, department, salary FROM employees;
+Examples (use the exact prefixed table name shown in the schema):
+- Task: "fetch employee_id, name, department, salary from airport_employees"
+  → SELECT employee_id, name, department, salary FROM airport_employees;
 - Task: "fetch all flight records"
-  → SELECT * FROM flights;
-- Task: "fetch project name, status and budget from projects"
-  → SELECT name, status, budget FROM projects;
+  → SELECT * FROM airport_flights;
+- Task: "fetch project name, status and budget from tech_startup_projects"
+  → SELECT name, status, budget FROM tech_startup_projects;
 """
 
 

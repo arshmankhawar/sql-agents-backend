@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 MOCK_SCHEMAS: dict[str, list[dict[str, Any]]] = {
     "airport": [
         {
-            "table": "employees",
+            "table": "airport_employees",
             "description": "Airport staff including clearance levels.",
             "columns": [
                 {"name": "employee_id", "type": "integer", "pk": True},
@@ -44,7 +44,7 @@ MOCK_SCHEMAS: dict[str, list[dict[str, Any]]] = {
             "examples": ["average salary by clearance", "list of security staff"],
         },
         {
-            "table": "flights",
+            "table": "airport_flights",
             "description": "Flight schedules and statuses.",
             "columns": [
                 {"name": "flight_id", "type": "integer", "pk": True},
@@ -58,7 +58,7 @@ MOCK_SCHEMAS: dict[str, list[dict[str, Any]]] = {
     ],
     "tech_startup": [
         {
-            "table": "employees",
+            "table": "tech_startup_employees",
             "description": "Tech startup employees including programming skills.",
             "columns": [
                 {"name": "employee_id", "type": "integer", "pk": True},
@@ -70,7 +70,7 @@ MOCK_SCHEMAS: dict[str, list[dict[str, Any]]] = {
             "examples": ["average salary for python developers", "engineering head count"],
         },
         {
-            "table": "projects",
+            "table": "tech_startup_projects",
             "description": "Active tech projects and their budgets.",
             "columns": [
                 {"name": "project_id", "type": "integer", "pk": True},
@@ -83,7 +83,7 @@ MOCK_SCHEMAS: dict[str, list[dict[str, Any]]] = {
     ],
     "restaurant": [
         {
-            "table": "employees",
+            "table": "restaurant_employees",
             "description": "Restaurant staff including shift schedules.",
             "columns": [
                 {"name": "employee_id", "type": "integer", "pk": True},
@@ -95,7 +95,7 @@ MOCK_SCHEMAS: dict[str, list[dict[str, Any]]] = {
             "examples": ["salary for night shift", "number of chefs"],
         },
         {
-            "table": "menus",
+            "table": "restaurant_menus",
             "description": "Menu items and pricing.",
             "columns": [
                 {"name": "item_id", "type": "integer", "pk": True},
