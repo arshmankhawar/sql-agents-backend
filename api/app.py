@@ -53,16 +53,16 @@ app = FastAPI(
 
 # Allowed CORS origins. The deployed frontend origin is supplied via the
 # FRONTEND_ORIGIN env var so no code change is needed across environments.
+# In production (ENVIRONMENT=production) only that origin is allowed; the
+# localhost dev/preview origins are added only outside production.
 _frontend_origin = os.getenv("FRONTEND_ORIGIN", "")
-_allowed_origins = [
-    o
-    for o in [
-        "http://localhost:5173",  # Vite dev
-        "http://localhost:4173",  # Vite preview
-        _frontend_origin,  # deployed frontend (e.g. https://arshman.techquest.ai)
-    ]
-    if o
+_is_production = os.getenv("ENVIRONMENT", "development").lower() == "production"
+
+_dev_origins = [] if _is_production else [
+    "http://localhost:5173",  # Vite dev
+    "http://localhost:4173",  # Vite preview
 ]
+_allowed_origins = [o for o in [*_dev_origins, _frontend_origin] if o]
 
 app.add_middleware(
     CORSMiddleware,
