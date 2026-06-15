@@ -13,6 +13,10 @@ A production-grade implementation of the redesigned multi-agent SQL pipeline wit
 
 ## Architecture
 
+> 📊 **Full flow diagrams** (system, auth, pipeline, database, CI/CD) live in
+> [`docs/ARCHITECTURE_DIAGRAM.md`](docs/ARCHITECTURE_DIAGRAM.md) — Mermaid that
+> renders on GitHub, with PNG exports in [`docs/diagrams/`](docs/diagrams/).
+
 ```
 Client
    │
