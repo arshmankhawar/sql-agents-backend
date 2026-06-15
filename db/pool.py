@@ -1,14 +1,16 @@
 """
-db/pool.py — SQLite Database Access Layer.
+db/pool.py — SQLite Database Access Layer (Table Gateway).
 
-Each domain maps to its own SQLite file:
-    db/airport.db        → airport domain
-    db/tech_startup.db   → tech_startup domain
-    db/restaurant.db     → restaurant domain
+All domains now share a single database file, db/analytics.db. Domain
+separation is enforced inside that file by per-domain VIEWS (see
+db/setup_sqlite.py): an "airport" agent queries the `airport_employees` view,
+which only ever exposes airport rows. The `domain` argument is therefore no
+longer used to pick a file — it is retained for query-hash isolation and
+logging — and every query runs against the one unified database.
 
-execute_query() runs real SQL against the correct database and returns
-results as a list of dicts (column_name → value), matching the interface
-the rest of the pipeline expects.
+execute_query() runs real SQL against analytics.db and returns results as a
+list of dicts (column_name → value), matching the interface the rest of the
+pipeline expects.
 
 The function is async (uses asyncio.to_thread) so callers on the event loop
 are never blocked by disk I/O.
@@ -32,10 +34,14 @@ logger = logging.getLogger(__name__)
 
 _DB_DIR = Path(SQLITE_DB_PATH)
 
+# Single unified database. Every domain resolves to this file; domain isolation
+# is provided by per-domain views inside it (see db/setup_sqlite.py).
+_DB_FILE = _DB_DIR / "analytics.db"
+
 
 def _domain_db(domain: str) -> Path:
-    """Return the SQLite file path for a given domain."""
-    return _DB_DIR / f"{domain}.db"
+    """Return the unified SQLite file path (same for every domain)."""
+    return _DB_FILE
 
 
 def _sync_execute(sql: str, domain: str) -> list[dict[str, Any]]:

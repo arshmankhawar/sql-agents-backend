@@ -24,7 +24,7 @@ QUERY_TTL_SECONDS: int = int(os.getenv("QUERY_TTL_SECONDS", "120"))
 RESULT_CACHE_TTL_SECONDS: int = int(os.getenv("RESULT_CACHE_TTL_SECONDS", "3600"))
 
 # ── SQLite databases ──────────────────────────────────────────────────────────
-# Directory containing domain.db files (airport.db, tech_startup.db, restaurant.db)
+# Directory containing the unified database file (analytics.db)
 SQLITE_DB_PATH: str = os.getenv("SQLITE_DB_PATH", "./db")
 
 # ── Schema Retrieval ──────────────────────────────────────────────────────────

@@ -24,9 +24,9 @@ _PARENT_SYSTEM_PROMPT = """\
 You are the Parent Orchestrator for a multi-domain data analytics system.
 
 Available domains are:
-- "airport" (tables: employees, flights)
-- "tech_startup" (tables: employees, projects)
-- "restaurant" (tables: employees, menus)
+- "airport" (tables: airport_employees, airport_flights)
+- "tech_startup" (tables: tech_startup_employees, tech_startup_projects)
+- "restaurant" (tables: restaurant_employees, restaurant_menus)
 
 Given a user request, you must:
 1. Identify which domains are needed to fulfill the request.
