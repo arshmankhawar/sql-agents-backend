@@ -17,9 +17,12 @@ import logging
 import time as _time
 from typing import AsyncGenerator
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+
+from api.auth.models import UserInfo
+from api.auth.security import get_current_user
 
 logger = logging.getLogger("api.query")
 
@@ -152,7 +155,10 @@ async def _sse_generator(user_request: str) -> AsyncGenerator[str, None]:
 
 
 @router.post("/query")
-async def stream_query(body: QueryRequest):
+async def stream_query(
+    body: QueryRequest,
+    _: UserInfo = Depends(get_current_user),
+):
     return StreamingResponse(
         _sse_generator(body.query),
         media_type="text/event-stream",

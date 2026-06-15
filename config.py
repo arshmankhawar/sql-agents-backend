@@ -31,3 +31,14 @@ SQLITE_DB_PATH: str = os.getenv("SQLITE_DB_PATH", "./db")
 SCHEMA_INDEX_PATH: str = os.getenv("SCHEMA_INDEX_PATH", "./schema_index")
 SCHEMA_TOP_K: int = int(os.getenv("SCHEMA_TOP_K", "5"))
 EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+
+# ── JWT Authentication ──────────────────────────────────────────────────────
+# Secret used to sign access tokens. MUST be overridden in production via the
+# JWT_SECRET_KEY env var; the insecure default only exists so local dev runs.
+JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "dev-only-insecure-change-me")
+JWT_ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
+ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
+
+# Seed admin user, created by db/setup_sqlite.py if the users table is empty.
+ADMIN_USERNAME: str = os.getenv("ADMIN_USERNAME", "admin")
+ADMIN_PASSWORD: str = os.getenv("ADMIN_PASSWORD", "change-me")

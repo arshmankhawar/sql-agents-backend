@@ -80,9 +80,13 @@ app.add_middleware(
 )
 
 # ── API routers ───────────────────────────────────────────────────────────────
-from api.routes import compare, health, index, query  # noqa: E402
+from api.routes import auth, compare, health, index, query  # noqa: E402
 
+# health stays public (used by the CD health check); auth/login is public by
+# definition. query/compare/build-index are protected per-route via
+# Depends(get_current_user).
 app.include_router(health.router, prefix="/api/v1")
+app.include_router(auth.router, prefix="/api/v1")
 app.include_router(query.router, prefix="/api/v1")
 app.include_router(compare.router, prefix="/api/v1")
 app.include_router(index.router, prefix="/api/v1")

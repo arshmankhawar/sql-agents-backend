@@ -29,8 +29,19 @@ Each table has ~10 rows of realistic data matching the FAISS schema definitions.
 Safe to re-run: drops and recreates all tables and views each time.
 """
 
+import os
 import sqlite3
+import sys
 from pathlib import Path
+
+from dotenv import load_dotenv
+
+# Make the project root importable so this script can be run directly
+# (python db/setup_sqlite.py) and still import utils.passwords.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from utils.passwords import hash_password  # noqa: E402
+
+load_dotenv()
 
 DB_DIR = Path(__file__).parent
 DB_FILE = DB_DIR / "analytics.db"
@@ -55,6 +66,7 @@ DROP TABLE IF EXISTS employees;
 DROP TABLE IF EXISTS flights;
 DROP TABLE IF EXISTS projects;
 DROP TABLE IF EXISTS menus;
+DROP TABLE IF EXISTS users;
 
 -- One employees table for every domain. employee_id is no longer globally
 -- unique (each domain numbers from 1), so a surrogate `id` is the primary key
@@ -101,6 +113,15 @@ CREATE TABLE menus (
     category TEXT    NOT NULL,
     price    REAL    NOT NULL,
     UNIQUE (domain, item_id)
+);
+
+-- Application users for JWT login. Passwords are bcrypt-hashed (never stored
+-- in plaintext). Seeded with an admin user from ADMIN_USERNAME/ADMIN_PASSWORD.
+CREATE TABLE users (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    username      TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 -- ── Per-domain views (the surface agents query) ──────────────────────────────
@@ -257,6 +278,16 @@ def setup_all() -> None:
             "INSERT INTO menus (domain, item_id, name, category, price) VALUES (?,?,?,?,?)",
             _MENUS,
         )
+
+        # Seed the admin user (bcrypt-hashed). Credentials come from the
+        # environment so the password is never committed to source.
+        admin_user = os.getenv("ADMIN_USERNAME", "admin")
+        admin_pass = os.getenv("ADMIN_PASSWORD", "change-me")
+        c.execute(
+            "INSERT INTO users (username, password_hash) VALUES (?, ?)",
+            (admin_user, hash_password(admin_pass)),
+        )
+
         conn.commit()
     finally:
         conn.close()
@@ -265,6 +296,7 @@ def setup_all() -> None:
           f"projects={len(_PROJECTS)}, menus={len(_MENUS)}  -> {DB_FILE}")
     print("  views: airport_employees, airport_flights, tech_startup_employees, "
           "tech_startup_projects, restaurant_employees, restaurant_menus")
+    print(f"  users: 1 (admin='{os.getenv('ADMIN_USERNAME', 'admin')}')")
     print("Done. Unified database ready.")
 
 

@@ -8,13 +8,19 @@ to avoid blocking the event loop or any in-flight requests.
 
 import asyncio
 
-from fastapi import APIRouter, BackgroundTasks
+from fastapi import APIRouter, BackgroundTasks, Depends
+
+from api.auth.models import UserInfo
+from api.auth.security import get_current_user
 
 router = APIRouter()
 
 
 @router.post("/build-index")
-async def build_index_endpoint(background_tasks: BackgroundTasks):
+async def build_index_endpoint(
+    background_tasks: BackgroundTasks,
+    _: UserInfo = Depends(get_current_user),
+):
     async def _rebuild():
         from schema.indexer import build_index
         await asyncio.to_thread(build_index)

@@ -64,6 +64,9 @@ jobs:
           fi
           # First-run safety net — build the schema index if it is missing.
           [ -d schema_index ] || PYTHONIOENCODING=utf-8 venv/bin/python main.py --build-index
+          # Idempotent, data-preserving migrations (e.g. ensure the users table
+          # + seed admin) — safe to run on every deploy.
+          PYTHONIOENCODING=utf-8 venv/bin/python db/migrate.py
           pm2 restart sql-agents-api --update-env
           REMOTE
 

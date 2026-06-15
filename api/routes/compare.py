@@ -13,9 +13,12 @@ import json
 import logging
 from typing import AsyncGenerator
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+
+from api.auth.models import UserInfo
+from api.auth.security import get_current_user
 
 logger = logging.getLogger("api.compare")
 router = APIRouter()
@@ -137,7 +140,10 @@ async def _compare_generator(query: str, mode: int) -> AsyncGenerator[str, None]
 
 
 @router.post("/compare")
-async def stream_compare(body: CompareRequest):
+async def stream_compare(
+    body: CompareRequest,
+    _: UserInfo = Depends(get_current_user),
+):
     if body.mode not in (1, 2, 3):
         raise HTTPException(status_code=400, detail="mode must be 1, 2, or 3")
     return StreamingResponse(
