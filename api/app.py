@@ -3,7 +3,8 @@ api/app.py — FastAPI application factory.
 
 Responsibilities:
   - Lifespan: preload FAISS retrievers at startup, close Redis at shutdown.
-  - CORS: allow Vite dev server (localhost:5173) and Vite preview (localhost:4173).
+  - CORS: allow FRONTEND_ORIGIN; localhost dev/preview origins only outside
+    production (ENVIRONMENT != production).
   - Static files: serve the compiled React SPA from ./static when it exists
     (production single-container mode).
   - Routers: mount health, query, and index routes under /api/v1.
@@ -13,10 +14,16 @@ import logging
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
+from dotenv import load_dotenv
+
+# Load .env before any os.getenv() below (the CORS config reads FRONTEND_ORIGIN
+# and ENVIRONMENT at import time, which happens before config.py is imported).
+load_dotenv()
+
+from fastapi import FastAPI  # noqa: E402
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+from fastapi.responses import FileResponse  # noqa: E402
+from fastapi.staticfiles import StaticFiles  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
