@@ -1,0 +1,180 @@
+{
+  "info": {
+    "name": "Multi-Agent SQL Analytics API",
+    "_postman_id": "a1b2c3d4-0000-4000-8000-sqlagents001",
+    "description": "Postman collection for the Multi-Agent SQL Analytics backend.\n\n## Base URL\nSet the `base_url` collection variable. Defaults to the live deployment\n`https://arshman.techquest.ai`. For local testing use `http://localhost:8010`.\n\n## Authentication\nMost endpoints require a Bearer JWT. Run **Auth > Login** first — its test\nscript automatically stores the returned token in the `access_token` collection\nvariable, which every protected request then sends via the\n`Authorization: Bearer {{access_token}}` header. `Health` is public (used by the\nCD health check) and needs no token.\n\n## Streaming (SSE)\n`/query` and `/compare` return `text/event-stream` (Server-Sent Events). Postman\nshows the streamed events in the response body as they arrive. Each line is\nprefixed with `data: ` and contains a JSON event object.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "https://arshman.techquest.ai",
+      "type": "string"
+    },
+    {
+      "key": "username",
+      "value": "admin",
+      "type": "string"
+    },
+    {
+      "key": "password",
+      "value": "change-me",
+      "type": "string"
+    },
+    {
+      "key": "access_token",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/health",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "health"]
+            },
+            "description": "Liveness probe. Public (no auth). Returns `{ \"status\": \"ok\", \"ts\": <epoch> }`. Used by the GitHub Actions CD health check."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Capture the access token so protected requests can reuse it.",
+                  "if (pm.response.code === 200) {",
+                  "    const body = pm.response.json();",
+                  "    if (body.access_token) {",
+                  "        pm.collectionVariables.set('access_token', body.access_token);",
+                  "        console.log('access_token stored');",
+                  "    }",
+                  "    pm.test('token returned', function () {",
+                  "        pm.expect(body.access_token).to.be.a('string').and.not.empty;",
+                  "    });",
+                  "} else {",
+                  "    pm.test('login succeeded', function () {",
+                  "        pm.expect(pm.response.code).to.eql(200);",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{username}}\",\n  \"password\": \"{{password}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/login",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "auth", "login"]
+            },
+            "description": "Exchange username/password for a JWT access token. The test script stores `access_token` automatically. Returns `{ \"access_token\": \"...\", \"token_type\": \"bearer\", \"expires_in\": <seconds> }`."
+          },
+          "response": []
+        },
+        {
+          "name": "Me (current user)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/me",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "auth", "me"]
+            },
+            "description": "Return the identity encoded in the current bearer token. Useful to verify the token is valid and not expired."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Pipeline",
+      "item": [
+        {
+          "name": "Query (SSE stream)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"Compare average salaries between tech_startup and airport\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/query",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "query"]
+            },
+            "description": "Run the full multi-agent pipeline for a natural-language request and stream progress as SSE.\n\nEvents (in order): `planning_started`, `domains_identified`, `planning_complete`, per-task `task_started`/`task_complete`, `synthesis_started`, `synthesis_complete` (contains the final `answer`, `charts`, and `stats`). On failure an `error` event is sent. Requires auth."
+          },
+          "response": []
+        },
+        {
+          "name": "Compare (baseline vs improved, SSE)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"Compare average salaries between tech_startup and airport\",\n  \"mode\": 2\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/compare",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "compare"]
+            },
+            "description": "Run the same query through the baseline (no Blackboard) and improved (deduplicated) architectures and stream a comparison.\n\nmode: 1 = SQLite native speed (0ms latency), 2 = simulated production DB (250ms latency, dedup wins), 3 = 250ms + warm cache (cache dominates).\n\nStreams `compare_status` progress events then a final `comparison_complete` event with `baseline`, `improved`, and `delta` (db_calls/schema_tokens saved, time diff, winner). Requires auth."
+          },
+          "response": []
+        },
+        {
+          "name": "Rebuild schema index",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/build-index",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "build-index"]
+            },
+            "description": "Trigger a FAISS schema-index rebuild in a background thread. Returns immediately with `{ \"status\": \"index rebuild started\" }`. Run this after changing the schema definitions. Requires auth."
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}
