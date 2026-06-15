@@ -1,0 +1,71 @@
+name: Deploy backend
+
+# Continuous deployment: every push to main rsyncs the source to the
+# DigitalOcean droplet and restarts the PM2-managed uvicorn process.
+# The droplet holds no GitHub credentials — the runner pushes to it over SSH
+# using a dedicated, revocable deploy key (secrets.DEPLOY_SSH_KEY).
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/cd_key
+          chmod 600 ~/.ssh/cd_key
+          ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Sync source to droplet
+        run: |
+          rsync -az --delete \
+            -e "ssh -i ~/.ssh/cd_key -o IdentitiesOnly=yes" \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='venv/' \
+            --exclude='.venv/' \
+            --exclude='.env' \
+            --exclude='.env.bak*' \
+            --exclude='.env.local' \
+            --exclude='__pycache__/' \
+            --exclude='*.pyc' \
+            --exclude='schema_index/' \
+            --exclude='db/*.db' \
+            --exclude='static/' \
+            --exclude='.claude/' \
+            ./ root@"${{ secrets.DEPLOY_HOST }}":/root/sql-agents-backend/
+
+      - name: Install deps, ensure data, restart service
+        run: |
+          ssh -i ~/.ssh/cd_key -o IdentitiesOnly=yes \
+            root@"${{ secrets.DEPLOY_HOST }}" 'bash -se' <<'REMOTE'
+          export PATH=/root/.nvm/versions/node/v24.11.0/bin:$PATH
+          cd /root/sql-agents-backend
+          venv/bin/pip install -q -r requirements.txt
+          # First-run safety nets — recreate gitignored artifacts if absent
+          [ -f db/airport.db ] || PYTHONIOENCODING=utf-8 venv/bin/python db/setup_sqlite.py
+          [ -d schema_index ] || PYTHONIOENCODING=utf-8 venv/bin/python main.py --build-index
+          pm2 restart sql-agents-api --update-env
+          REMOTE
+
+      - name: Health check
+        run: |
+          sleep 15
+          for i in $(seq 1 6); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' https://arshman.techquest.ai/api/v1/health || true)
+            echo "health attempt $i -> HTTP $code"
+            [ "$code" = "200" ] && exit 0
+            sleep 5
+          done
+          echo "::error::Backend health check did not return 200"; exit 1
