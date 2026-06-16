@@ -59,7 +59,32 @@ async def _run_comparison(query: str, mode: int, q: asyncio.Queue) -> None:
 
         total = 4 if mode == 3 else 3
 
-        # Plan once to derive agent_tasks for the baseline
+        # ── Input guard ──────────────────────────────────────────────────────
+        # Gate the (expensive, run-twice) comparison pipeline. Greetings and
+        # off-topic / jailbreak attempts get a direct reply and never run any
+        # baseline or improved pipeline. This is the live site's main entrypoint,
+        # so the guard here is what protects production from abuse + token waste.
+        from agents.guard import triage
+        verdict = await triage(query)
+        if not verdict.is_data_query:
+            logger.info("[Compare] short-circuited by guard (intent=%s)", verdict.intent)
+            q.put_nowait({
+                "event": "comparison_complete",
+                "mode": mode,
+                "latency_ms": latency_ms,
+                "guarded": True,
+                "baseline": {"db_calls": 0, "schema_tokens": 0, "elapsed_ms": 0, "answer": verdict.reply},
+                "improved": {"db_calls": 0, "cache_hits": 0, "schema_tokens": 0, "elapsed_ms": 0, "answer": verdict.reply},
+                "delta": {
+                    "db_calls_saved": 0, "db_calls_saved_pct": 0,
+                    "schema_tokens_saved": 0, "schema_tokens_saved_pct": 0,
+                    "time_diff_ms": 0, "winner": "improved",
+                },
+            })
+            return
+
+        # Plan once to derive agent_tasks for the baseline (reused by run_improved
+        # below to avoid a second, redundant planning round-trip).
         status("Planning query structure…", total)
         tasks = await ParentOrchestrator().plan_global_dag(query)
         validate_dag(tasks)
@@ -77,19 +102,19 @@ async def _run_comparison(query: str, mode: int, q: asyncio.Queue) -> None:
         baseline: BaselineResult
         if mode == 3:
             status("Running improved pipeline (warming cache)…", total)
-            await run_improved(query, flush_cache=True)
+            await run_improved(query, flush_cache=True, tasks=tasks)
 
             status("Running baseline pipeline…", total)
             baseline = await run_baseline(query, baseline_tasks)
 
             status("Running improved pipeline with warm cache…", total)
-            improved = await run_improved(query, flush_cache=False)
+            improved = await run_improved(query, flush_cache=False, tasks=tasks)
         else:
             status("Running baseline pipeline…", total)
             baseline = await run_baseline(query, baseline_tasks)
 
             status("Running improved pipeline…", total)
-            improved = await run_improved(query, flush_cache=True)
+            improved = await run_improved(query, flush_cache=True, tasks=tasks)
 
         db_saved = baseline.db_calls - improved.db_calls
         tok_saved = baseline.schema_tokens - improved.schema_tokens

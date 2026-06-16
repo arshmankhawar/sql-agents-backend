@@ -13,6 +13,12 @@ load_dotenv()
 GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
 GROQ_MODEL: str = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 
+# Small, cheap, fast model used for the input guard / triage step. Classifying a
+# message ("is this a real data question, chit-chat, or an off-topic/jailbreak
+# attempt?") does not need the 70B model — the 8B instant model is ~10x cheaper
+# and gates the expensive pipeline so trivial/abusive queries cost almost nothing.
+GUARD_MODEL: str = os.getenv("GUARD_MODEL", "llama-3.1-8b-instant")
+
 # ── Redis / Blackboard ────────────────────────────────────────────────────────
 REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 

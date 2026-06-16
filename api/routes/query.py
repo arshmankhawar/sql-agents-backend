@@ -57,6 +57,29 @@ async def _run_pipeline_into_queue(user_request: str, q: asyncio.Queue) -> None:
     try:
         q.put_nowait({"event": "planning_started", "ts": _time.time(), "request_id": request_id})
 
+        # ── Input guard ──────────────────────────────────────────────────────
+        # One cheap classification gates the expensive pipeline. Greetings/chit-
+        # chat get a direct reply; off-topic or jailbreak attempts are refused —
+        # neither triggers any SQL/RAG tool calls or the synthesis LLM.
+        from agents.guard import triage
+        verdict = await triage(user_request)
+        if not verdict.is_data_query:
+            logger.info("[Pipeline] short-circuited by guard (intent=%s)", verdict.intent)
+            q.put_nowait({
+                "event": "synthesis_complete",
+                "ts": _time.time(),
+                "answer": verdict.reply,
+                "charts": [],
+                "sources": [],
+                "stats": {
+                    "plan_ms": round((_time.perf_counter() - t_plan_start) * 1000),
+                    "exec_ms": 0, "synth_ms": 0,
+                    "total_ms": round((_time.perf_counter() - t_plan_start) * 1000),
+                    "db_calls": 0, "cache_hits": 0,
+                },
+            })
+            return
+
         planner = ParentOrchestrator()
         tasks = await planner.plan_global_dag(user_request)
 
