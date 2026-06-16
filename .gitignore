@@ -16,6 +16,8 @@ env/
 
 # Generated artifacts (recreate with setup commands)
 schema_index/
+document_index/
+uploads/
 static/
 db/*.db
 

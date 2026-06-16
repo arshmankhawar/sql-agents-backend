@@ -90,6 +90,15 @@ class SchemaRetriever:
         self._model = _get_shared_model()
         logger.info("[Retriever][%s] Loaded index with %d tables", self.domain, len(self._schema_defs))
 
+    def reload(self) -> None:
+        """
+        Force the index + metadata to be re-read from disk on next use. Called
+        after a CSV upload rebuilds this domain's index so newly added tables
+        become retrievable without restarting the server.
+        """
+        self._index = None
+        self._schema_defs = []
+
     def _compile_table_keywords(self) -> dict[str, set[str]]:
         """Build a keyword map from schema metadata for general relevance matching."""
         keyword_map: dict[str, set[str]] = {}
@@ -198,6 +207,12 @@ def get_retriever(domain: str) -> SchemaRetriever:
     if domain not in _retrievers:
         _retrievers[domain] = SchemaRetriever(domain)
     return _retrievers[domain]
+
+
+def refresh_retriever(domain: str) -> None:
+    """Invalidate a domain's cached index so it reloads from disk on next use."""
+    if domain in _retrievers:
+        _retrievers[domain].reload()
 
 
 async def preload_retrievers(domains: list[str]) -> None:

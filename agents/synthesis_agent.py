@@ -20,16 +20,20 @@ from planner.task_planner import TaskNode
 logger = logging.getLogger(__name__)
 
 _SYNTHESIS_SYSTEM_PROMPT = """\
-You are a data analyst who communicates SQL query results in plain English.
+You are a data analyst who communicates results in plain English, drawing on both
+structured database results and excerpts from uploaded documents.
 
 You will be given:
 1. The user's original question.
 2. A structured summary of the data retrieved from real database tables.
+3. (Optionally) relevant excerpts retrieved from uploaded documents.
 
 Your job: Write a clear, insightful paragraph (3-6 sentences) that directly answers the
-question using the specific numbers from the data. Mention actual values, comparisons,
-and any notable findings. Do not hedge with "it seems" or "the data suggests" — state
-the facts directly as they appear in the data.
+question. Use the specific numbers from the structured data, and incorporate facts from
+the document excerpts where relevant. When you use information from a document, name the
+source document (e.g., "according to <filename>"). Do not hedge with "it seems" or "the
+data suggests" — state the facts directly. If the structured data and documents together
+don't answer the question, say what is missing.
 """
 
 
@@ -94,6 +98,29 @@ def _format_data_for_synthesis(
     return "\n".join(sections) if sections else "(no data available)"
 
 
+def _format_documents_for_synthesis(results: dict[str, Any]) -> str:
+    """
+    Build a 'Document Excerpts' block from any file_search task results.
+
+    Returns an empty string when no document chunks were retrieved, so the
+    synthesis prompt is unchanged for pure-SQL queries.
+    """
+    sections: list[str] = []
+    for result in results.values():
+        if not isinstance(result, dict) or result.get("source") != "file_search":
+            continue
+        for chunk in result.get("chunks", []):
+            text = (chunk.get("text") or "").strip()
+            if not text:
+                continue
+            source = chunk.get("filename", "document")
+            sections.append(f"[{source}] {text}")
+
+    if not sections:
+        return ""
+    return "\n\n".join(sections)
+
+
 class SynthesisAgent:
     """
     Generates a natural language answer from in-memory SQL/derived results.
@@ -132,11 +159,14 @@ class SynthesisAgent:
             A plain-English paragraph with the answer.
         """
         data_summary = _format_data_for_synthesis(tasks, results)
+        doc_excerpts = _format_documents_for_synthesis(results)
 
         user_message = (
             f'User question: "{user_request}"\n\n'
             f"Data retrieved from the database:\n{data_summary}"
         )
+        if doc_excerpts:
+            user_message += f"\n\nRelevant excerpts from uploaded documents:\n{doc_excerpts}"
 
         messages = [
             SystemMessage(content=_SYNTHESIS_SYSTEM_PROMPT),

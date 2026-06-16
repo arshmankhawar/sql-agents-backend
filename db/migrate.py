@@ -60,6 +60,56 @@ def ensure_users_table(conn: sqlite3.Connection) -> None:
         print(f"  users table already populated ({count} user(s)) — no seed needed")
 
 
+def ensure_upload_tables(conn: sqlite3.Connection) -> None:
+    """Add the file/CSV upload tables if missing (idempotent, data-preserving)."""
+    if not _table_exists(conn, "uploaded_datasets"):
+        conn.execute(
+            """
+            CREATE TABLE uploaded_datasets (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                name        TEXT NOT NULL UNIQUE,
+                table_name  TEXT NOT NULL,
+                domain      TEXT NOT NULL,
+                columns     TEXT NOT NULL,
+                row_count   INTEGER NOT NULL DEFAULT 0,
+                filename    TEXT,
+                description TEXT,
+                created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+            """
+        )
+        print("  created table: uploaded_datasets")
+
+    if not _table_exists(conn, "documents"):
+        conn.execute(
+            """
+            CREATE TABLE documents (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                filename    TEXT NOT NULL,
+                description TEXT,
+                file_type   TEXT,
+                chunk_count INTEGER NOT NULL DEFAULT 0,
+                created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+            """
+        )
+        print("  created table: documents")
+
+    if not _table_exists(conn, "document_chunks"):
+        conn.execute(
+            """
+            CREATE TABLE document_chunks (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                document_id INTEGER NOT NULL,
+                chunk_index INTEGER NOT NULL,
+                text        TEXT NOT NULL,
+                FOREIGN KEY (document_id) REFERENCES documents(id)
+            )
+            """
+        )
+        print("  created table: document_chunks")
+
+
 def migrate() -> None:
     if not DB_FILE.exists():
         print(f"  {DB_FILE} does not exist — run db/setup_sqlite.py first.")
@@ -68,6 +118,7 @@ def migrate() -> None:
     conn = sqlite3.connect(str(DB_FILE))
     try:
         ensure_users_table(conn)
+        ensure_upload_tables(conn)
         conn.commit()
     finally:
         conn.close()

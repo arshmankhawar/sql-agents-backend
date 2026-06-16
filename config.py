@@ -32,6 +32,27 @@ SCHEMA_INDEX_PATH: str = os.getenv("SCHEMA_INDEX_PATH", "./schema_index")
 SCHEMA_TOP_K: int = int(os.getenv("SCHEMA_TOP_K", "5"))
 EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
 
+# ── File & Document Uploads ───────────────────────────────────────────────────
+# Directory where raw uploaded files (documents) are persisted.
+UPLOAD_DIR: str = os.getenv("UPLOAD_DIR", "./uploads")
+
+# FAISS index directory for uploaded-document chunk embeddings (separate from the
+# schema index so document search and schema retrieval never collide).
+DOCUMENT_INDEX_PATH: str = os.getenv("DOCUMENT_INDEX_PATH", "./document_index")
+
+# Chunking parameters for document ingestion.
+CHUNK_SIZE: int = int(os.getenv("CHUNK_SIZE", "512"))
+CHUNK_OVERLAP: int = int(os.getenv("CHUNK_OVERLAP", "64"))
+
+# Two-step file retrieval: first narrow to the N most relevant documents, then
+# pull the K best chunks from within only those documents. This keeps an
+# abundance of files from flooding a single flat search.
+FILE_SEARCH_TOP_DOCS: int = int(os.getenv("FILE_SEARCH_TOP_DOCS", "3"))
+FILE_SEARCH_TOP_CHUNKS: int = int(os.getenv("FILE_SEARCH_TOP_CHUNKS", "5"))
+
+# Domain name under which uploaded CSV/Excel tables live in analytics.db.
+UPLOADS_DOMAIN: str = os.getenv("UPLOADS_DOMAIN", "uploads")
+
 # ── JWT Authentication ──────────────────────────────────────────────────────
 # Secret used to sign access tokens. MUST be overridden in production via the
 # JWT_SECRET_KEY env var; the insecure default only exists so local dev runs.
