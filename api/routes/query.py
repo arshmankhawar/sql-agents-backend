@@ -152,10 +152,11 @@ async def _run_pipeline_into_queue(user_request: str, q: asyncio.Queue) -> None:
 
     except Exception as exc:
         logger.exception("[Pipeline] Unhandled error for request %r", user_request)
+        from utils.error_handler import friendly_error
         q.put_nowait({
             "event": "error",
             "ts": _time.time(),
-            "message": str(exc),
+            "message": friendly_error(exc),
             "phase": "pipeline",
             "request_id": request_id,
         })

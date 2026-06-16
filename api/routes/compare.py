@@ -135,7 +135,8 @@ async def _run_comparison(query: str, mode: int, q: asyncio.Queue) -> None:
 
     except Exception as exc:
         logger.exception("[Compare] Error for query %r mode=%d", query, mode)
-        q.put_nowait({"event": "error", "message": str(exc)})
+        from utils.error_handler import friendly_error
+        q.put_nowait({"event": "error", "message": friendly_error(exc)})
     finally:
         q.put_nowait(None)
 
