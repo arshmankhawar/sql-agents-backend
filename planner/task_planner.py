@@ -35,7 +35,7 @@ from typing import Any
 from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from config import GROQ_API_KEY, GROQ_MODEL
+from config import GROQ_API_KEY, GROQ_MODEL, UPLOADS_DOMAIN
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +117,39 @@ Example for "compare average salary between domains" (user wants ONE number per 
 """
 
 
+_UPLOADS_PLANNER_PROMPT_TEMPLATE = """\
+You are a task decomposition planner for USER-UPLOADED datasets.
+
+The user has uploaded the following tables. Use ONLY these exact table and column names:
+{tables_block}
+
+Rules:
+- Reference tables by their exact name shown above (they start with `user_`).
+- SQL tasks fetch RAW rows only — name the table and the columns to select.
+- Do NOT aggregate in SQL. Use a "derived" task for averages/sums/ranking.
+- Do NOT invent columns that are not listed above.
+
+Task Types:
+1. "sql": Fetch raw rows from one uploaded table.
+2. "derived": Aggregate an upstream SQL result in Python (zero DB calls).
+3. "plot": Visualise an upstream result.
+
+Output a valid JSON array of task objects, each with:
+  - "id": unique string like "t1", "t2"
+  - "description": specific action (e.g. "fetch region, amount from user_sales")
+  - "task_type": "sql", "derived", or "plot"
+  - "depends_on": array of prerequisite task IDs (empty if independent)
+  - "operation": (derived only) one of:
+      {{"type": "group_avg", "group_keys": ["col"], "value_key": "num_col"}}
+      {{"type": "group_sum", "group_keys": ["col"], "value_key": "num_col"}}
+      {{"type": "top_n_per_group", "partition_key": "col", "rank_key": "num_col", "n": 5}}
+      {{"type": "contribution_pct", "group_key": "col", "value_key": "num_col"}}
+      {{"type": "rank_within_group", "group_key": "col", "rank_key": "num_col"}}
+
+Keep the plan minimal (1-3 SQL tasks). Use group_avg for averages, group_sum for totals.
+"""
+
+
 class ChildTaskPlanner:
     """
     LLM-powered task decomposition planner for a specific domain.
@@ -154,7 +187,7 @@ class ChildTaskPlanner:
         """
         logger.info("[ChildPlanner][%s] Decomposing request: %r", self.domain, user_request)
 
-        system_prompt = _PLANNER_SYSTEM_PROMPT_TEMPLATE.format(domain=self.domain)
+        system_prompt = self._system_prompt()
         messages = [
             SystemMessage(content=system_prompt),
             HumanMessage(content=f"User request (plan ONLY for the {self.domain} domain): {user_request}"),
@@ -167,6 +200,30 @@ class ChildTaskPlanner:
         tasks = self._parse_tasks(raw)
         logger.info("[ChildPlanner][%s] Decomposed into %d tasks: %s", self.domain, len(tasks), [t.id for t in tasks])
         return tasks
+
+    def _system_prompt(self) -> str:
+        """
+        Build the planner system prompt for this domain.
+
+        Built-in domains use the static employee/flights template. The uploads
+        domain is schema-driven: the prompt is generated from the actual columns
+        of whatever the user uploaded, so the LLM references real table names.
+        """
+        if self.domain == UPLOADS_DOMAIN:
+            from schema.dynamic_schema import get_uploads_schema_defs
+
+            defs = get_uploads_schema_defs()
+            if not defs:
+                tables_block = "(no uploaded tables)"
+            else:
+                lines = []
+                for d in defs:
+                    cols = ", ".join(f"{c['name']} ({c['type']})" for c in d["columns"])
+                    lines.append(f"- {d['table']}: {cols}")
+                tables_block = "\n".join(lines)
+            return _UPLOADS_PLANNER_PROMPT_TEMPLATE.format(tables_block=tables_block)
+
+        return _PLANNER_SYSTEM_PROMPT_TEMPLATE.format(domain=self.domain)
 
     def _parse_tasks(self, raw: str) -> list[TaskNode]:
         """Parse LLM JSON output into TaskNode list with robust error handling."""

@@ -132,6 +132,8 @@ class DAGExecutor:
         """Dispatch a single task to the appropriate agent."""
         if task.task_type == "sql":
             return await self._run_sql_task(task)
+        elif task.task_type == "file_search":
+            return await self._run_file_task(task)
         elif task.task_type == "derived":
             from agents.derived_agent import compute_derived
             from blackboard.result_cache import cache_set
@@ -150,6 +152,13 @@ class DAGExecutor:
         agent = SQLAgent(agent_id=f"sql_{task.id}", domain=task.domain)
         result = await agent.run(task.description)
         return result
+
+    async def _run_file_task(self, task: TaskNode) -> dict[str, Any]:
+        """Spawn a File agent and run two-step document retrieval."""
+        from agents.file_agent import FileAgent
+
+        agent = FileAgent(agent_id=f"file_{task.id}")
+        return await agent.run(task.description)
 
     async def _run_plot_task(
         self,

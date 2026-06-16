@@ -14,7 +14,7 @@ import logging
 from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from config import GROQ_API_KEY, GROQ_MODEL
+from config import GROQ_API_KEY, GROQ_MODEL, UPLOADS_DOMAIN
 from planner.task_planner import ChildTaskPlanner, TaskNode
 
 logger = logging.getLogger(__name__)
@@ -23,14 +23,23 @@ logger = logging.getLogger(__name__)
 _PARENT_SYSTEM_PROMPT = """\
 You are the Parent Orchestrator for a multi-domain data analytics system.
 
-Available domains are:
+Built-in database domains are:
 - "airport" (tables: airport_employees, airport_flights)
 - "tech_startup" (tables: tech_startup_employees, tech_startup_projects)
 - "restaurant" (tables: restaurant_employees, restaurant_menus)
 
+Additional resources may be available at runtime and will be listed under
+"Currently available resources" in the user message:
+- "uploads" — a domain holding user-uploaded CSV/Excel tables. Include it in
+  "domains" when the question is about that uploaded tabular data.
+- Uploaded documents — searchable text files. Set "requires_file_search" to true
+  when the question could be answered from those documents (definitions, policies,
+  narrative/qualitative information), not just from the structured tables.
+
 Given a user request, you must:
-1. Identify which domains are needed to fulfill the request.
-2. Determine if a global cross-domain comparison or plot task is required at the end.
+1. Identify which domains are needed (only from domains that exist).
+2. Decide if uploaded documents should be searched (requires_file_search).
+3. Determine if a global cross-domain comparison or plot task is required at the end.
 
 If the request does not explicitly name a domain, infer the most plausible domain from the query content.
 If the request refers to multiple domains or explicitly compares domains, include both.
@@ -40,21 +49,56 @@ Output a valid JSON object with:
   - "domains": array of strings (e.g. ["airport", "tech_startup"])
   - "requires_cross_domain_plot": boolean (true if the user wants to compare them)
   - "cross_domain_task_description": string (description of the plot/comparison, or null)
+  - "requires_file_search": boolean (true to search uploaded documents)
+  - "file_search_query": string (what to look for in the documents, or null)
 
 Example: "Compare the average salary of employees in the tech startup with the airport"
 {
   "domains": ["tech_startup", "airport"],
   "requires_cross_domain_plot": true,
-  "cross_domain_task_description": "plot comparing average employee salary between tech startup and airport"
+  "cross_domain_task_description": "plot comparing average employee salary between tech startup and airport",
+  "requires_file_search": false,
+  "file_search_query": null
 }
 
-Example: "What is the average salary of employees?"
+Example: "What does our security policy say about clearance levels, and what is the average airport salary?"
 {
-  "domains": ["airport", "tech_startup", "restaurant"],
+  "domains": ["airport"],
   "requires_cross_domain_plot": false,
-  "cross_domain_task_description": null
+  "cross_domain_task_description": null,
+  "requires_file_search": true,
+  "file_search_query": "security policy clearance levels"
 }
 """
+
+
+def _available_resources_block() -> str:
+    """
+    Describe runtime-available uploaded tables and documents so the parent LLM
+    can route to them. Returns an empty string when nothing has been uploaded.
+    """
+    from schema.dynamic_schema import list_uploaded_table_summaries
+    from storage.document_store import list_documents
+
+    lines: list[str] = []
+
+    tables = list_uploaded_table_summaries()
+    if tables:
+        lines.append('Uploaded tables (domain "uploads"):')
+        lines.extend(f"  - {t}" for t in tables)
+
+    docs = list_documents()
+    if docs:
+        lines.append("Uploaded documents (searchable text):")
+        for d in docs[:20]:
+            label = d["filename"]
+            if d.get("description"):
+                label += f" — {d['description']}"
+            lines.append(f"  - {label}")
+
+    if not lines:
+        return ""
+    return "Currently available resources:\n" + "\n".join(lines)
 
 
 class ParentOrchestrator:
@@ -94,9 +138,16 @@ class ParentOrchestrator:
         # Keep a strong reference on the instance so the loop doesn't GC the task.
         self._warm_task = asyncio.create_task(warm_model_async())
 
+        # Tell the LLM what the user has actually uploaded (tables + documents) so
+        # it can route to the uploads domain / file search only when they exist.
+        resources = _available_resources_block()
+        user_content = f"User request: {user_request}"
+        if resources:
+            user_content += f"\n\n{resources}"
+
         messages = [
             SystemMessage(content=_PARENT_SYSTEM_PROMPT),
-            HumanMessage(content=f"User request: {user_request}"),
+            HumanMessage(content=user_content),
         ]
 
         response = await self.llm.ainvoke(messages)
@@ -114,6 +165,14 @@ class ParentOrchestrator:
         domains = data.get("domains", [])
         if not domains:
              domains = ["airport", "tech_startup", "restaurant"]
+
+        # Drop the uploads domain if the LLM selected it but nothing is uploaded,
+        # so an empty uploads planner never runs.
+        if UPLOADS_DOMAIN in domains:
+            from schema.dynamic_schema import get_uploads_schema_defs
+            if not get_uploads_schema_defs():
+                domains = [d for d in domains if d != UPLOADS_DOMAIN]
+                logger.info("[ParentOrchestrator] Dropped 'uploads' domain — no datasets uploaded")
 
         logger.info("[ParentOrchestrator] Identified domains: %s", domains)
 
@@ -149,5 +208,21 @@ class ParentOrchestrator:
             )
             global_dag.append(global_task)
             logger.info("[ParentOrchestrator] Added global cross-domain task: %s", desc)
+
+        # Add a document file-search task if the request needs uploaded documents
+        # and at least one is indexed. It runs in parallel with the SQL tasks
+        # (independent data source) and its chunks feed synthesis directly.
+        if data.get("requires_file_search"):
+            from storage.document_store import has_documents
+            if has_documents():
+                fs_query = data.get("file_search_query") or user_request
+                global_dag.append(TaskNode(
+                    id="file_search_1",
+                    description=fs_query,
+                    task_type="file_search",
+                    domain="files",
+                    depends_on=[],
+                ))
+                logger.info("[ParentOrchestrator] Added file_search task: %r", fs_query)
 
         return global_dag

@@ -21,7 +21,7 @@ from typing import Any
 
 import numpy as np
 
-from config import EMBEDDING_MODEL, SCHEMA_INDEX_PATH
+from config import EMBEDDING_MODEL, SCHEMA_INDEX_PATH, UPLOADS_DOMAIN
 
 logger = logging.getLogger(__name__)
 
@@ -136,46 +136,72 @@ def _table_to_text(table_def: dict[str, Any]) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _get_schema_defs(domain: str) -> list[dict[str, Any]]:
-    """Return the schema definitions for the given domain."""
+    """
+    Return the schema definitions for the given domain.
+
+    Built-in domains come from MOCK_SCHEMAS; the uploads domain is resolved at
+    runtime from the uploaded_datasets table (dynamic schema registry).
+    """
+    if domain == UPLOADS_DOMAIN:
+        from schema.dynamic_schema import get_uploads_schema_defs
+        return get_uploads_schema_defs()
     return MOCK_SCHEMAS.get(domain, [])
+
+
+def _build_one(model, domain: str) -> bool:
+    """Embed and persist the FAISS index for a single domain. Returns False if
+    the domain has no tables to index."""
+    import faiss
+
+    schema_defs = _get_schema_defs(domain)
+    if not schema_defs:
+        return False
+
+    texts = [_table_to_text(t) for t in schema_defs]
+    logger.info("[Schema][%s] Embedding %d tables...", domain, len(texts))
+    embeddings = model.encode(texts, normalize_embeddings=True, show_progress_bar=False)
+    embeddings = np.array(embeddings, dtype=np.float32)
+
+    dim = embeddings.shape[1]
+    index = faiss.IndexFlatIP(dim)
+    index.add(embeddings)
+
+    out_dir = Path(SCHEMA_INDEX_PATH) / domain
+    out_dir.mkdir(parents=True, exist_ok=True)
+    faiss.write_index(index, str(out_dir / "index.faiss"))
+    with open(out_dir / "metadata.json", "w") as f:
+        json.dump(schema_defs, f, indent=2)
+
+    logger.info("[Schema][%s] Index saved -> %s  (%d tables)", domain, out_dir, len(schema_defs))
+    return True
 
 
 def build_index() -> None:
     """
-    Build (or rebuild) the FAISS schema indexes for all domains and save to disk.
+    Build (or rebuild) the FAISS schema indexes for all built-in domains and,
+    if any datasets have been uploaded, the uploads domain too.
     """
     from sentence_transformers import SentenceTransformer
-    import faiss
 
     logger.info("[Schema] Building indexes using model=%s", EMBEDDING_MODEL)
     model = SentenceTransformer(EMBEDDING_MODEL)
 
-    base_out_dir = Path(SCHEMA_INDEX_PATH)
-
     for domain in MOCK_SCHEMAS.keys():
-        schema_defs = _get_schema_defs(domain)
-        if not schema_defs:
-            continue
+        _build_one(model, domain)
+    # Uploads domain is optional — only build if datasets exist.
+    _build_one(model, UPLOADS_DOMAIN)
 
-        texts = [_table_to_text(t) for t in schema_defs]
 
-        logger.info("[Schema][%s] Embedding %d tables...", domain, len(texts))
-        embeddings = model.encode(texts, normalize_embeddings=True, show_progress_bar=False)
-        embeddings = np.array(embeddings, dtype=np.float32)
+def build_domain_index(domain: str) -> bool:
+    """
+    Rebuild the FAISS index for a single domain (used after a CSV upload so the
+    new table becomes immediately retrievable). Reuses the shared embedding model
+    to avoid a second multi-second model load.
+    """
+    from schema.retriever import _get_shared_model
 
-        dim = embeddings.shape[1]
-        index = faiss.IndexFlatIP(dim)
-        index.add(embeddings)
-
-        # Save to disk per domain
-        out_dir = base_out_dir / domain
-        out_dir.mkdir(parents=True, exist_ok=True)
-
-        faiss.write_index(index, str(out_dir / "index.faiss"))
-        with open(out_dir / "metadata.json", "w") as f:
-            json.dump(schema_defs, f, indent=2)
-
-        logger.info("[Schema][%s] Index saved -> %s  (%d tables)", domain, out_dir, len(schema_defs))
+    model = _get_shared_model()
+    return _build_one(model, domain)
 
 
 def load_index(domain: str):

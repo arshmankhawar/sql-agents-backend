@@ -60,7 +60,7 @@ async def _run_pipeline_into_queue(user_request: str, q: asyncio.Queue) -> None:
         planner = ParentOrchestrator()
         tasks = await planner.plan_global_dag(user_request)
 
-        domains = sorted({t.domain for t in tasks if t.domain not in ("global", "default")})
+        domains = sorted({t.domain for t in tasks if t.domain not in ("global", "default", "files")})
         requires_cross = any(t.id == "global_plot_1" for t in tasks)
         q.put_nowait({
             "event": "domains_identified",
@@ -118,6 +118,18 @@ async def _run_pipeline_into_queue(user_request: str, q: asyncio.Queue) -> None:
                 if "chart" in r:
                     charts.append({"task_id": task.id, **r["chart"]})
 
+        # Collect document citations from any file_search task results so the
+        # client can render source cards beneath the answer.
+        sources = []
+        for task in tasks:
+            if task.task_type == "file_search" and task.id in results:
+                for chunk in results[task.id].get("chunks", []):
+                    sources.append({
+                        "filename": chunk.get("filename"),
+                        "text": chunk.get("text", "")[:500],
+                        "score": chunk.get("score"),
+                    })
+
         # Compute DB stats from SQL task results
         sql_results = [
             results[t.id] for t in tasks if t.task_type == "sql" and t.id in results
@@ -140,6 +152,7 @@ async def _run_pipeline_into_queue(user_request: str, q: asyncio.Queue) -> None:
             "ts": _time.time(),
             "answer": answer,
             "charts": charts,
+            "sources": sources,
             "stats": {
                 "plan_ms": round(plan_ms),
                 "exec_ms": round(exec_ms),

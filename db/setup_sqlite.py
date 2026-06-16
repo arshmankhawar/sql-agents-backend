@@ -67,6 +67,9 @@ DROP TABLE IF EXISTS flights;
 DROP TABLE IF EXISTS projects;
 DROP TABLE IF EXISTS menus;
 DROP TABLE IF EXISTS users;
+DROP TABLE IF EXISTS uploaded_datasets;
+DROP TABLE IF EXISTS documents;
+DROP TABLE IF EXISTS document_chunks;
 
 -- One employees table for every domain. employee_id is no longer globally
 -- unique (each domain numbers from 1), so a surrogate `id` is the primary key
@@ -122,6 +125,42 @@ CREATE TABLE users (
     username      TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
     created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- ── Uploaded data registry (CSV/Excel → DB) ──────────────────────────────────
+-- One row per uploaded tabular dataset. The actual data lives in a dynamically
+-- created `user_<name>` table (+ a same-named view) so the SQL pipeline queries
+-- it exactly like the built-in domain views.
+CREATE TABLE uploaded_datasets (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL UNIQUE,   -- logical dataset name (also the view name)
+    table_name  TEXT NOT NULL,          -- physical base table name (user_<name>)
+    domain      TEXT NOT NULL,          -- always the uploads domain
+    columns     TEXT NOT NULL,          -- JSON: [{"name","type"}, ...]
+    row_count   INTEGER NOT NULL DEFAULT 0,
+    filename    TEXT,
+    description TEXT,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- ── Uploaded documents (file search / vector store) ──────────────────────────
+-- Metadata for each uploaded document. Chunk text + embeddings are tracked in
+-- document_chunks; the embeddings themselves live in a FAISS index on disk.
+CREATE TABLE documents (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    filename    TEXT NOT NULL,
+    description TEXT,
+    file_type   TEXT,                   -- pdf | txt | docx | md
+    chunk_count INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE document_chunks (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id INTEGER NOT NULL,
+    chunk_index INTEGER NOT NULL,       -- ordinal position within the document
+    text        TEXT NOT NULL,
+    FOREIGN KEY (document_id) REFERENCES documents(id)
 );
 
 -- ── Per-domain views (the surface agents query) ──────────────────────────────
