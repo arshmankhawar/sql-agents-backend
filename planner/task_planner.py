@@ -246,6 +246,58 @@ def validate_dag(tasks: list[TaskNode]) -> bool:
     return True
 
 
+def sanitize_dag(tasks: list[TaskNode]) -> list[TaskNode]:
+    """
+    Deterministically repair common LLM planning mistakes so the DAG is safe to
+    execute, WITHOUT an extra LLM round-trip.
+
+    Repairs applied (each logged as a warning):
+      1. Drop ``depends_on`` IDs that reference a non-existent task (dangling edges).
+      2. Drop ``derived``/``plot`` tasks that have no valid upstream dependency —
+         they have nothing to compute or visualise from and would only error.
+      3. Iterates to a fixpoint: removing a task can orphan its dependents, so we
+         repeat until no further repairs are needed.
+
+    SQL tasks are never dropped (they are the data sources). Returns the cleaned
+    list, preserving original order.
+    """
+    cleaned = list(tasks)
+
+    while True:
+        valid_ids = {t.id for t in cleaned}
+        changed = False
+        next_tasks: list[TaskNode] = []
+
+        for task in cleaned:
+            # 1. Prune dangling dependency edges.
+            pruned_deps = [d for d in task.depends_on if d in valid_ids]
+            if len(pruned_deps) != len(task.depends_on):
+                dropped = set(task.depends_on) - set(pruned_deps)
+                logger.warning(
+                    "[sanitize_dag] Task %s references unknown deps %s — dropping those edges",
+                    task.id, dropped,
+                )
+                task.depends_on = pruned_deps
+                changed = True
+
+            # 2. A derived/plot task with no surviving upstream cannot run.
+            if task.task_type in ("derived", "plot") and not task.depends_on:
+                logger.warning(
+                    "[sanitize_dag] Dropping %s task %s — it has no valid upstream dependency",
+                    task.task_type, task.id,
+                )
+                changed = True
+                continue  # drop it
+
+            next_tasks.append(task)
+
+        cleaned = next_tasks
+        if not changed:
+            break
+
+    return cleaned
+
+
 def _topological_sort(tasks: list[TaskNode]) -> list[str]:
     """Kahn's algorithm — returns execution order or raises on cycle."""
     in_degree: dict[str, int] = {t.id: 0 for t in tasks}

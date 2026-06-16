@@ -15,7 +15,7 @@ from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from config import GROQ_API_KEY, GROQ_MODEL
-from planner.task_planner import ChildTaskPlanner, TaskNode
+from planner.task_planner import ChildTaskPlanner, TaskNode, sanitize_dag
 
 logger = logging.getLogger(__name__)
 
@@ -149,5 +149,30 @@ class ParentOrchestrator:
             )
             global_dag.append(global_task)
             logger.info("[ParentOrchestrator] Added global cross-domain task: %s", desc)
+
+        # Deterministic self-repair pass: prune dangling dependency edges and drop
+        # derived/plot tasks left with no upstream. This makes the pipeline robust
+        # to imperfect LLM plans without paying for an extra reflection round-trip.
+        before = len(global_dag)
+        global_dag = sanitize_dag(global_dag)
+        if len(global_dag) != before:
+            logger.info(
+                "[ParentOrchestrator] sanitize_dag repaired plan: %d → %d tasks",
+                before, len(global_dag),
+            )
+
+        # Degenerate-case guard: if repair emptied the plan (or planning produced
+        # nothing), fall back to a catch-all SQL task per identified domain so the
+        # request still returns data rather than failing.
+        if not global_dag:
+            logger.warning("[ParentOrchestrator] Empty DAG after sanitize — injecting catch-all SQL tasks")
+            for domain in domains:
+                global_dag.append(TaskNode(
+                    id=f"{domain}_t1",
+                    description=f"retrieve employee data from the {domain} domain",
+                    task_type="sql",
+                    domain=domain,
+                    depends_on=[],
+                ))
 
         return global_dag

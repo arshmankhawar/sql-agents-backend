@@ -14,6 +14,7 @@ pre-filtered to only the relevant tables — solving Problem 3 (excessive contex
 
 import logging
 import re
+import sqlite3
 import uuid
 from typing import Any
 
@@ -25,6 +26,10 @@ from config import GROQ_API_KEY, GROQ_MODEL
 from schema.retriever import get_retriever
 
 logger = logging.getLogger(__name__)
+
+# Max number of SQL generation attempts. The first is the initial generation;
+# each subsequent attempt feeds the previous failure back to the LLM to fix.
+_MAX_SQL_ATTEMPTS = 3
 
 # ─────────────────────────────────────────────────────────────────────────────
 # LLM initialisation
@@ -110,9 +115,29 @@ class SQLAgent:
             self._llm = _get_llm()
         return self._llm
 
-    async def _generate_sql(self, task: str, schema_context: str) -> str:
-        """Use the Groq LLM to generate a SQL query for the given task."""
+    async def _generate_sql(
+        self,
+        task: str,
+        schema_context: str,
+        prior_sql: str | None = None,
+        prior_error: str | None = None,
+    ) -> str:
+        """
+        Use the Groq LLM to generate a SQL query for the given task.
+
+        When ``prior_sql`` and ``prior_error`` are supplied (a previous attempt
+        failed at the database), they are appended to the prompt so the model can
+        reflect on its own mistake and correct it — the self-correcting agent loop.
+        """
         user_message = f"Domain: {self.domain}\nTask: {task}\n\n{schema_context}"
+        if prior_sql and prior_error:
+            user_message += (
+                f"\n\nYour previous attempt FAILED. Fix it.\n"
+                f"Previous SQL: {prior_sql}\n"
+                f"Database error: {prior_error}\n"
+                f"Re-read the schema above carefully — only use columns/tables that exist. "
+                f"Output the corrected SQL only."
+            )
         messages = [
             SystemMessage(content=_SYSTEM_PROMPT),
             HumanMessage(content=user_message),
@@ -126,6 +151,10 @@ class SQLAgent:
     async def run(self, task: str) -> dict[str, Any]:
         """
         Execute the full agent pipeline for a given task.
+
+        Implements a self-correcting loop: if the generated SQL fails at the
+        database (e.g. a hallucinated column name), the agent feeds the error
+        back to the LLM and regenerates, up to ``_MAX_SQL_ATTEMPTS`` times.
 
         Args:
             task: Natural language task description (e.g. "revenue by region for 2025").
@@ -142,13 +171,39 @@ class SQLAgent:
         # Count schema tokens (rough estimate: ~4 chars per token)
         schema_tokens = len(schema_context) // 4
 
-        # Step 2: Generate SQL via LLM (async — does not block the event loop)
-        sql = await self._generate_sql(task, schema_context)
+        prior_sql: str | None = None
+        prior_error: str | None = None
+        last_exc: Exception | None = None
 
-        # Step 3: Execute via Blackboard (handles deduplication, caching, coordination)
-        result = await run_with_blackboard(self.agent_id, task, sql, domain=self.domain)
+        for attempt in range(1, _MAX_SQL_ATTEMPTS + 1):
+            # Step 2: Generate SQL via LLM (async — does not block the event loop).
+            # On retries, prior_sql/prior_error steer the model toward a fix.
+            sql = await self._generate_sql(task, schema_context, prior_sql, prior_error)
 
-        # Add schema tokens to result for metrics tracking
-        result["schema_tokens"] = schema_tokens
+            # Step 3: Execute via Blackboard (handles dedup, caching, coordination).
+            try:
+                result = await run_with_blackboard(self.agent_id, task, sql, domain=self.domain)
+            except sqlite3.Error as exc:
+                # The SQL was syntactically/semantically invalid at the DB. Capture
+                # the real error, hand it back to the LLM, and try again. A failed
+                # owner claim for this (bad) SQL hash simply expires via its TTL.
+                last_exc = exc
+                prior_sql = sql
+                prior_error = str(exc)
+                logger.warning(
+                    "[%s] SQL attempt %d/%d failed: %s — retrying with feedback",
+                    self.agent_id, attempt, _MAX_SQL_ATTEMPTS, exc,
+                )
+                continue
 
-        return result
+            # Success — annotate metrics and return.
+            result["schema_tokens"] = schema_tokens
+            result["sql_attempts"] = attempt
+            return result
+
+        # All attempts exhausted — surface the last DB error to the caller.
+        logger.error(
+            "[%s] Exhausted %d SQL attempts; last error: %s",
+            self.agent_id, _MAX_SQL_ATTEMPTS, last_exc,
+        )
+        raise last_exc  # type: ignore[misc]
