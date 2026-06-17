@@ -8,9 +8,20 @@ whole in one of the two neighbouring chunks).
 The splitter is paragraph-aware: it accumulates whole paragraphs up to the size
 limit before cutting, and only hard-splits a single oversized paragraph. This
 keeps chunks semantically coherent rather than slicing mid-word.
+
+chunk_sections() builds on top of this with one more rule: a chunk never spans
+two different headings. A 1200-character section under "Security Policy" still
+gets split into multiple ~512-char chunks (chunk_text does that), but none of
+those chunks bleed into the next section's content — keeping each chunk's
+heading/category metadata accurate for the rule-based retrieval filter in
+storage/document_store.py.
 """
 
+from typing import TypedDict
+
 from config import CHUNK_OVERLAP, CHUNK_SIZE
+from storage.categorizer import classify_category
+from storage.text_extractor import Section
 
 
 def chunk_text(
@@ -64,3 +75,36 @@ def chunk_text(
 
     flush()
     return [c for c in chunks if c]
+
+
+class Chunk(TypedDict):
+    text: str
+    heading: str | None
+    category: str
+
+
+def chunk_sections(
+    sections: list[Section],
+    chunk_size: int = CHUNK_SIZE,
+    overlap: int = CHUNK_OVERLAP,
+) -> list[Chunk]:
+    """
+    Chunk a heading-delimited document (see storage/text_extractor.py) into
+    size-bounded pieces that respect section boundaries and carry metadata.
+
+    Each section is chunked independently via chunk_text() — preserving the
+    existing paragraph-aware overlap behaviour within a section — but chunks
+    never cross a heading boundary, and each chunk is tagged with its
+    section's heading plus a rule-based category (storage/categorizer.py) so
+    retrieval can filter by metadata before running the vector search.
+    """
+    out: list[Chunk] = []
+    for section in sections:
+        heading = section.get("heading")
+        for piece in chunk_text(section["text"], chunk_size=chunk_size, overlap=overlap):
+            out.append({
+                "text": piece,
+                "heading": heading,
+                "category": classify_category(heading, piece),
+            })
+    return out
