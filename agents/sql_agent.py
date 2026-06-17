@@ -14,9 +14,10 @@ pre-filtered to only the relevant tables — solving Problem 3 (excessive contex
 
 import logging
 import re
-import sqlite3
 import uuid
 from typing import Any
+
+import asyncpg
 
 from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -52,7 +53,7 @@ def _get_llm() -> ChatGroq:
 
 
 _SYSTEM_PROMPT = """\
-You are a SQL query writer for a SQLite database. Given a task description and the relevant \
+You are a SQL query writer for a PostgreSQL database. Given a task description and the relevant \
 table schema, write a single SQL SELECT statement.
 
 Rules:
@@ -61,7 +62,8 @@ Rules:
 - Do NOT add WHERE clauses that filter by domain name, company name, or any value not \
   present in the data (e.g., never write WHERE domain = '...' or WHERE company = '...').
 - Fetch RAW rows — do not aggregate (no GROUP BY, AVG, SUM). The derived agent will aggregate.
-- Use standard SQLite syntax (no YEAR(), no ::cast, no schema-qualified names).
+- Use standard PostgreSQL syntax (no schema-qualified names — every table is in the public \
+  schema and exposed as a plain view name).
 - End the query with a semicolon.
 
 Examples (use the exact prefixed table name shown in the schema):
@@ -183,7 +185,7 @@ class SQLAgent:
             # Step 3: Execute via Blackboard (handles dedup, caching, coordination).
             try:
                 result = await run_with_blackboard(self.agent_id, task, sql, domain=self.domain)
-            except sqlite3.Error as exc:
+            except asyncpg.PostgresError as exc:
                 # The SQL was syntactically/semantically invalid at the DB. Capture
                 # the real error, hand it back to the LLM, and try again. A failed
                 # owner claim for this (bad) SQL hash simply expires via its TTL.

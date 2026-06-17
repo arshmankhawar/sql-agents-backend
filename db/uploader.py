@@ -1,31 +1,30 @@
 """
-db/uploader.py — CSV / Excel ingestion into the unified analytics database.
+db/uploader.py — CSV / Excel ingestion into the unified Postgres database.
 
-An uploaded tabular file becomes a physical SQLite table named ``user_<name>``
-inside db/analytics.db, plus a row in ``uploaded_datasets`` describing it. Once
-ingested, the table is just another surface the existing SQL pipeline can query
-— the dynamic schema registry (schema/dynamic_schema.py) exposes its columns to
-the FAISS retriever under the uploads domain, so SQLAgent needs no changes.
+An uploaded tabular file becomes a physical Postgres table named ``user_<name>``
+inside the analytics database, plus a row in ``uploaded_datasets`` describing
+it. Once ingested, the table is just another surface the existing SQL pipeline
+can query — the dynamic schema registry (schema/dynamic_schema.py) exposes its
+columns to the FAISS retriever under the uploads domain, so SQLAgent needs no
+changes.
 
-Column types are inferred from the parsed pandas dtypes and mapped to SQLite
-storage classes (INTEGER / REAL / TEXT). Names are sanitised to safe SQL
+Column types are inferred from the parsed pandas dtypes and mapped to Postgres
+types (INTEGER / DOUBLE PRECISION / TEXT). Names are sanitised to safe SQL
 identifiers to avoid injection and reserved-word issues.
 """
 
 import json
 import logging
 import re
-import sqlite3
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
+import psycopg2
 
-from config import SQLITE_DB_PATH, UPLOADS_DOMAIN
+from config import DATABASE_URL, UPLOADS_DOMAIN
 
 logger = logging.getLogger(__name__)
-
-_DB_FILE = Path(SQLITE_DB_PATH) / "analytics.db"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -46,14 +45,14 @@ def sanitize_identifier(raw: str) -> str:
     return cleaned
 
 
-def _infer_sqlite_type(dtype: Any) -> str:
-    """Map a pandas dtype to a SQLite storage class."""
+def _infer_pg_type(dtype: Any) -> str:
+    """Map a pandas dtype to a Postgres column type."""
     if pd.api.types.is_integer_dtype(dtype):
         return "INTEGER"
     if pd.api.types.is_float_dtype(dtype):
-        return "REAL"
+        return "DOUBLE PRECISION"
     if pd.api.types.is_bool_dtype(dtype):
-        return "INTEGER"
+        return "BOOLEAN"
     return "TEXT"
 
 
@@ -77,7 +76,7 @@ def ingest_file(
     description: str | None = None,
 ) -> dict[str, Any]:
     """
-    Ingest a CSV/Excel file into analytics.db as ``user_<dataset_name>``.
+    Ingest a CSV/Excel file into Postgres as ``user_<dataset_name>``.
 
     Re-uploading the same dataset name replaces the previous table and its
     registry row (idempotent overwrite).
@@ -108,56 +107,57 @@ def ingest_file(
             safe_col = f"{base}_{i}"
         seen.add(safe_col)
         rename[original] = safe_col
-        col_specs.append({"name": safe_col, "type": _infer_sqlite_type(df[original].dtype)})
+        col_specs.append({"name": safe_col, "type": _infer_pg_type(df[original].dtype)})
 
     df = df.rename(columns=rename)
 
     cols_ddl = ", ".join(f'"{c["name"]}" {c["type"]}' for c in col_specs)
 
-    conn = sqlite3.connect(str(_DB_FILE))
+    conn = psycopg2.connect(DATABASE_URL)
     try:
-        cur = conn.cursor()
-        # Replace any prior version of this dataset.
-        cur.execute(f'DROP TABLE IF EXISTS "{table_name}"')
-        cur.execute(f'CREATE TABLE "{table_name}" ({cols_ddl})')
+        with conn.cursor() as cur:
+            # Replace any prior version of this dataset.
+            cur.execute(f'DROP TABLE IF EXISTS "{table_name}"')
+            cur.execute(f'CREATE TABLE "{table_name}" ({cols_ddl})')
 
-        placeholders = ", ".join("?" for _ in col_specs)
-        col_names = ", ".join(f'"{c["name"]}"' for c in col_specs)
-        # NaN → None so SQLite stores NULL rather than the string 'nan'.
-        records = [
-            tuple(None if pd.isna(v) else v for v in row)
-            for row in df.itertuples(index=False, name=None)
-        ]
-        cur.executemany(
-            f'INSERT INTO "{table_name}" ({col_names}) VALUES ({placeholders})',
-            records,
-        )
+            placeholders = ", ".join("%s" for _ in col_specs)
+            col_names = ", ".join(f'"{c["name"]}"' for c in col_specs)
+            # NaN → None so Postgres stores NULL rather than the string 'nan'.
+            records = [
+                tuple(None if pd.isna(v) else v for v in row)
+                for row in df.itertuples(index=False, name=None)
+            ]
+            if records:
+                cur.executemany(
+                    f'INSERT INTO "{table_name}" ({col_names}) VALUES ({placeholders})',
+                    records,
+                )
 
-        row_count = len(records)
-        cur.execute(
-            """
-            INSERT INTO uploaded_datasets
-                (name, table_name, domain, columns, row_count, filename, description)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(name) DO UPDATE SET
-                table_name=excluded.table_name,
-                domain=excluded.domain,
-                columns=excluded.columns,
-                row_count=excluded.row_count,
-                filename=excluded.filename,
-                description=excluded.description,
-                created_at=datetime('now')
-            """,
-            (
-                safe_name,
-                table_name,
-                UPLOADS_DOMAIN,
-                json.dumps(col_specs),
-                row_count,
-                filename or path.name,
-                description,
-            ),
-        )
+            row_count = len(records)
+            cur.execute(
+                """
+                INSERT INTO uploaded_datasets
+                    (name, table_name, domain, columns, row_count, filename, description)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (name) DO UPDATE SET
+                    table_name=excluded.table_name,
+                    domain=excluded.domain,
+                    columns=excluded.columns,
+                    row_count=excluded.row_count,
+                    filename=excluded.filename,
+                    description=excluded.description,
+                    created_at=now()
+                """,
+                (
+                    safe_name,
+                    table_name,
+                    UPLOADS_DOMAIN,
+                    json.dumps(col_specs),
+                    row_count,
+                    filename or path.name,
+                    description,
+                ),
+            )
         conn.commit()
     finally:
         conn.close()
@@ -176,25 +176,17 @@ def ingest_file(
 
 def list_datasets() -> list[dict[str, Any]]:
     """Return all registered uploaded datasets (most recent first)."""
-    if not _DB_FILE.exists():
-        return []
-    conn = sqlite3.connect(str(_DB_FILE))
-    conn.row_factory = sqlite3.Row
+    conn = psycopg2.connect(DATABASE_URL)
     try:
-        # Guard against the table not existing yet (pre-migration DB).
-        exists = conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='uploaded_datasets'"
-        ).fetchone()
-        if not exists:
-            return []
-        rows = conn.execute(
-            "SELECT name, table_name, row_count, filename, description, created_at "
-            "FROM uploaded_datasets ORDER BY created_at DESC"
-        ).fetchall()
-        out = []
-        for r in rows:
-            d = dict(r)
-            out.append(d)
-        return out
+        with conn.cursor() as cur:
+            cur.execute("SELECT to_regclass('public.uploaded_datasets')")
+            if cur.fetchone()[0] is None:
+                return []
+            cur.execute(
+                "SELECT name, table_name, row_count, filename, description, created_at "
+                "FROM uploaded_datasets ORDER BY created_at DESC"
+            )
+            cols = [d.name for d in cur.description]
+            return [dict(zip(cols, row)) for row in cur.fetchall()]
     finally:
         conn.close()

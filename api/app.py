@@ -44,12 +44,20 @@ async def lifespan(app: FastAPI):
     await preload_retrievers(all_domains)
     logger.info("[Startup] FAISS preload complete. Ready to serve requests.")
 
+    from db.pool import get_pool
+    await get_pool()
+    logger.info("[Startup] Postgres connection pool ready.")
+
     yield
 
     # ── Shutdown ─────────────────────────────────────────────────────────────
     from blackboard.client import close_redis
     await close_redis()
     logger.info("[Shutdown] Redis connection closed.")
+
+    from db.pool import close_pool
+    await close_pool()
+    logger.info("[Shutdown] Postgres connection pool closed.")
 
 
 app = FastAPI(

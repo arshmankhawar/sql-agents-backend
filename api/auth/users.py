@@ -1,35 +1,37 @@
 """
 api/auth/users.py — Data access for the `users` table.
 
-Auth lookups use parameterised sqlite3 queries directly (NOT the pipeline's
+Auth lookups use parameterised psycopg2 queries directly (NOT the pipeline's
 db.pool.execute_query, which executes raw LLM-generated SQL and routes through
 domain views). Keeping auth on its own parameterised path prevents any chance
 of SQL injection via the username field.
 """
 
 import asyncio
-import sqlite3
-from pathlib import Path
 from typing import Any
 
-from config import SQLITE_DB_PATH
+import psycopg2
 
-_DB_FILE = Path(SQLITE_DB_PATH) / "analytics.db"
+from config import DATABASE_URL
 
 
 def _sync_get_user(username: str) -> dict[str, Any] | None:
-    if not _DB_FILE.exists():
-        return None
-    conn = sqlite3.connect(str(_DB_FILE))
-    conn.row_factory = sqlite3.Row
     try:
-        cur = conn.execute(
-            "SELECT id, username, password_hash FROM users WHERE username = ?",
-            (username,),
-        )
-        row = cur.fetchone()
-        return dict(row) if row else None
-    except sqlite3.Error:
+        conn = psycopg2.connect(DATABASE_URL)
+    except psycopg2.OperationalError:
+        return None
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, username, password_hash FROM users WHERE username = %s",
+                (username,),
+            )
+            row = cur.fetchone()
+            if row is None:
+                return None
+            cols = [d.name for d in cur.description]
+            return dict(zip(cols, row))
+    except psycopg2.Error:
         # users table may not exist yet (pre-migration) — treat as no user.
         return None
     finally:

@@ -10,6 +10,7 @@ CSV ingestion also rebuilds the uploads FAISS schema index and refreshes the
 cached retriever so the new table is immediately queryable by the SQL pipeline.
 """
 
+import asyncio
 import logging
 import tempfile
 from pathlib import Path
@@ -58,7 +59,9 @@ async def upload_csv(
             tmp_path = Path(tmp.name)
         try:
             from db.uploader import ingest_file
-            meta = ingest_file(tmp_path, dataset_name, filename=file.filename, description=description)
+            meta = await asyncio.to_thread(
+                ingest_file, tmp_path, dataset_name, filename=file.filename, description=description
+            )
         finally:
             tmp_path.unlink(missing_ok=True)
 
@@ -102,7 +105,9 @@ async def upload_file(
         dest.write_bytes(data)
 
         from storage.document_store import ingest_document
-        meta = ingest_document(dest, filename=file.filename or dest.name, description=description)
+        meta = await asyncio.to_thread(
+            ingest_document, dest, filename=file.filename or dest.name, description=description
+        )
     except HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001
@@ -121,11 +126,11 @@ async def upload_file(
 async def list_uploaded_datasets(_: UserInfo = Depends(get_current_user)):
     """List uploaded tabular datasets."""
     from db.uploader import list_datasets
-    return {"datasets": list_datasets()}
+    return {"datasets": await asyncio.to_thread(list_datasets)}
 
 
 @router.get("/files")
 async def list_uploaded_files(_: UserInfo = Depends(get_current_user)):
     """List uploaded documents."""
     from storage.document_store import list_documents
-    return {"documents": list_documents()}
+    return {"documents": await asyncio.to_thread(list_documents)}
