@@ -1,8 +1,9 @@
 """
-db/setup_sqlite.py — Create and populate the single unified SQLite database.
+db/setup_postgres.py — Create and populate the unified PostgreSQL database.
 
-Run this once to create one database, db/analytics.db, that holds every
-domain's data in shared base tables discriminated by a `domain` column:
+Run this once (against a fresh Postgres instance, e.g. via `docker compose up`)
+to create every domain's data in shared base tables discriminated by a
+`domain` column:
 
     employees (domain, employee_id, name, department, salary, + domain extras)
     flights   (domain, ...)   -- airport
@@ -22,32 +23,24 @@ Agents query the VIEWS, never the base tables. This means:
   - SQL agents never need (and must never write) a `WHERE domain = '...'` clause;
     the view already encapsulates that filter.
 
-Previously this created three separate files (airport.db, tech_startup.db,
-restaurant.db). Those are now consolidated; legacy files are removed on setup.
-
-Each table has ~10 rows of realistic data matching the FAISS schema definitions.
-Safe to re-run: drops and recreates all tables and views each time.
+Replaces the old db/setup_sqlite.py (single-file SQLite -> unified Postgres
+database). Safe to re-run: drops and recreates all tables and views each time.
 """
 
 import os
-import sqlite3
 import sys
 from pathlib import Path
 
+import psycopg2
 from dotenv import load_dotenv
 
 # Make the project root importable so this script can be run directly
-# (python db/setup_sqlite.py) and still import utils.passwords.
+# (python db/setup_postgres.py) and still import utils.passwords / config.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from config import DATABASE_URL  # noqa: E402
 from utils.passwords import hash_password  # noqa: E402
 
 load_dotenv()
-
-DB_DIR = Path(__file__).parent
-DB_FILE = DB_DIR / "analytics.db"
-
-# Legacy per-domain files removed during consolidation.
-_LEGACY_FILES = ["airport.db", "tech_startup.db", "restaurant.db"]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -62,20 +55,20 @@ DROP VIEW  IF EXISTS tech_startup_projects;
 DROP VIEW  IF EXISTS restaurant_employees;
 DROP VIEW  IF EXISTS restaurant_menus;
 
+DROP TABLE IF EXISTS document_chunks;
+DROP TABLE IF EXISTS documents;
+DROP TABLE IF EXISTS uploaded_datasets;
+DROP TABLE IF EXISTS users;
 DROP TABLE IF EXISTS employees;
 DROP TABLE IF EXISTS flights;
 DROP TABLE IF EXISTS projects;
 DROP TABLE IF EXISTS menus;
-DROP TABLE IF EXISTS users;
-DROP TABLE IF EXISTS uploaded_datasets;
-DROP TABLE IF EXISTS documents;
-DROP TABLE IF EXISTS document_chunks;
 
 -- One employees table for every domain. employee_id is no longer globally
 -- unique (each domain numbers from 1), so a surrogate `id` is the primary key
 -- and (domain, employee_id) is unique. Domain-specific attributes are nullable.
 CREATE TABLE employees (
-    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    id               SERIAL PRIMARY KEY,
     domain           TEXT    NOT NULL,
     employee_id      INTEGER NOT NULL,
     name             TEXT    NOT NULL,
@@ -88,7 +81,7 @@ CREATE TABLE employees (
 );
 
 CREATE TABLE flights (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    id          SERIAL PRIMARY KEY,
     domain      TEXT    NOT NULL,
     flight_id   INTEGER NOT NULL,
     airline     TEXT    NOT NULL,
@@ -99,7 +92,7 @@ CREATE TABLE flights (
 );
 
 CREATE TABLE projects (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    id         SERIAL PRIMARY KEY,
     domain     TEXT    NOT NULL,
     project_id INTEGER NOT NULL,
     name       TEXT    NOT NULL,
@@ -109,7 +102,7 @@ CREATE TABLE projects (
 );
 
 CREATE TABLE menus (
-    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    id       SERIAL PRIMARY KEY,
     domain   TEXT    NOT NULL,
     item_id  INTEGER NOT NULL,
     name     TEXT    NOT NULL,
@@ -121,10 +114,10 @@ CREATE TABLE menus (
 -- Application users for JWT login. Passwords are bcrypt-hashed (never stored
 -- in plaintext). Seeded with an admin user from ADMIN_USERNAME/ADMIN_PASSWORD.
 CREATE TABLE users (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    id            SERIAL PRIMARY KEY,
     username      TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
-    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- ── Uploaded data registry (CSV/Excel → DB) ──────────────────────────────────
@@ -132,7 +125,7 @@ CREATE TABLE users (
 -- created `user_<name>` table (+ a same-named view) so the SQL pipeline queries
 -- it exactly like the built-in domain views.
 CREATE TABLE uploaded_datasets (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    id          SERIAL PRIMARY KEY,
     name        TEXT NOT NULL UNIQUE,   -- logical dataset name (also the view name)
     table_name  TEXT NOT NULL,          -- physical base table name (user_<name>)
     domain      TEXT NOT NULL,          -- always the uploads domain
@@ -140,27 +133,28 @@ CREATE TABLE uploaded_datasets (
     row_count   INTEGER NOT NULL DEFAULT 0,
     filename    TEXT,
     description TEXT,
-    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- ── Uploaded documents (file search / vector store) ──────────────────────────
 -- Metadata for each uploaded document. Chunk text + embeddings are tracked in
 -- document_chunks; the embeddings themselves live in a FAISS index on disk.
 CREATE TABLE documents (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    id          SERIAL PRIMARY KEY,
     filename    TEXT NOT NULL,
     description TEXT,
     file_type   TEXT,                   -- pdf | txt | docx | md
     chunk_count INTEGER NOT NULL DEFAULT 0,
-    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE document_chunks (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    document_id INTEGER NOT NULL,
+    id          SERIAL PRIMARY KEY,
+    document_id INTEGER NOT NULL REFERENCES documents(id),
     chunk_index INTEGER NOT NULL,       -- ordinal position within the document
     text        TEXT NOT NULL,
-    FOREIGN KEY (document_id) REFERENCES documents(id)
+    heading     TEXT,                  -- section heading this chunk falls under, if any
+    category    TEXT NOT NULL DEFAULT 'general'  -- rule-based tag: policy/financial/narrative/table/general
 );
 
 -- ── Per-domain views (the surface agents query) ──────────────────────────────
@@ -281,62 +275,53 @@ _MENUS = [
 # Entry point
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _remove_legacy_files() -> None:
-    for name in _LEGACY_FILES:
-        legacy = DB_DIR / name
-        if legacy.exists():
-            legacy.unlink()
-            print(f"  removed legacy db: {legacy}")
-
-
 def setup_all() -> None:
-    print("Creating unified SQLite database...")
-    _remove_legacy_files()
+    print(f"Creating unified PostgreSQL database (DSN={DATABASE_URL!r})...")
 
-    conn = sqlite3.connect(str(DB_FILE))
+    conn = psycopg2.connect(DATABASE_URL)
     try:
-        c = conn.cursor()
-        c.executescript(_SCHEMA)
+        with conn.cursor() as c:
+            c.execute(_SCHEMA)
 
-        c.executemany(
-            "INSERT INTO employees "
-            "(domain, employee_id, name, department, salary, clearance_level, primary_language, shift) "
-            "VALUES (?,?,?,?,?,?,?,?)",
-            _EMPLOYEES,
-        )
-        c.executemany(
-            "INSERT INTO flights (domain, flight_id, airline, destination, status, passengers) "
-            "VALUES (?,?,?,?,?,?)",
-            _FLIGHTS,
-        )
-        c.executemany(
-            "INSERT INTO projects (domain, project_id, name, status, budget) VALUES (?,?,?,?,?)",
-            _PROJECTS,
-        )
-        c.executemany(
-            "INSERT INTO menus (domain, item_id, name, category, price) VALUES (?,?,?,?,?)",
-            _MENUS,
-        )
+            c.executemany(
+                "INSERT INTO employees "
+                "(domain, employee_id, name, department, salary, clearance_level, primary_language, shift) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+                _EMPLOYEES,
+            )
+            c.executemany(
+                "INSERT INTO flights (domain, flight_id, airline, destination, status, passengers) "
+                "VALUES (%s,%s,%s,%s,%s,%s)",
+                _FLIGHTS,
+            )
+            c.executemany(
+                "INSERT INTO projects (domain, project_id, name, status, budget) VALUES (%s,%s,%s,%s,%s)",
+                _PROJECTS,
+            )
+            c.executemany(
+                "INSERT INTO menus (domain, item_id, name, category, price) VALUES (%s,%s,%s,%s,%s)",
+                _MENUS,
+            )
 
-        # Seed the admin user (bcrypt-hashed). Credentials come from the
-        # environment so the password is never committed to source.
-        admin_user = os.getenv("ADMIN_USERNAME", "admin")
-        admin_pass = os.getenv("ADMIN_PASSWORD", "change-me")
-        c.execute(
-            "INSERT INTO users (username, password_hash) VALUES (?, ?)",
-            (admin_user, hash_password(admin_pass)),
-        )
+            # Seed the admin user (bcrypt-hashed). Credentials come from the
+            # environment so the password is never committed to source.
+            admin_user = os.getenv("ADMIN_USERNAME", "admin")
+            admin_pass = os.getenv("ADMIN_PASSWORD", "change-me")
+            c.execute(
+                "INSERT INTO users (username, password_hash) VALUES (%s, %s)",
+                (admin_user, hash_password(admin_pass)),
+            )
 
         conn.commit()
     finally:
         conn.close()
 
-    print(f"  [analytics.db] employees={len(_EMPLOYEES)}, flights={len(_FLIGHTS)}, "
-          f"projects={len(_PROJECTS)}, menus={len(_MENUS)}  -> {DB_FILE}")
+    print(f"  employees={len(_EMPLOYEES)}, flights={len(_FLIGHTS)}, "
+          f"projects={len(_PROJECTS)}, menus={len(_MENUS)}")
     print("  views: airport_employees, airport_flights, tech_startup_employees, "
           "tech_startup_projects, restaurant_employees, restaurant_menus")
     print(f"  users: 1 (admin='{os.getenv('ADMIN_USERNAME', 'admin')}')")
-    print("Done. Unified database ready.")
+    print("Done. Unified Postgres database ready.")
 
 
 if __name__ == "__main__":

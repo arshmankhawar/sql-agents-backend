@@ -10,15 +10,13 @@ retriever and SQL agent treat uploaded tables identically to built-in ones.
 
 import json
 import logging
-import sqlite3
-from pathlib import Path
 from typing import Any
 
-from config import SQLITE_DB_PATH
+import psycopg2
+
+from config import DATABASE_URL
 
 logger = logging.getLogger(__name__)
-
-_DB_FILE = Path(SQLITE_DB_PATH) / "analytics.db"
 
 
 def get_uploads_schema_defs() -> list[dict[str, Any]]:
@@ -28,20 +26,17 @@ def get_uploads_schema_defs() -> list[dict[str, Any]]:
     Each returned dict has: table, description, columns [{name, type}], examples.
     Returns an empty list if there are no uploads (or the table is missing).
     """
-    if not _DB_FILE.exists():
-        return []
-
-    conn = sqlite3.connect(str(_DB_FILE))
-    conn.row_factory = sqlite3.Row
+    conn = psycopg2.connect(DATABASE_URL)
     try:
-        exists = conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='uploaded_datasets'"
-        ).fetchone()
-        if not exists:
-            return []
-        rows = conn.execute(
-            "SELECT name, table_name, columns, description, row_count FROM uploaded_datasets"
-        ).fetchall()
+        with conn.cursor() as cur:
+            cur.execute("SELECT to_regclass('public.uploaded_datasets')")
+            if cur.fetchone()[0] is None:
+                return []
+            cur.execute(
+                "SELECT name, table_name, columns, description, row_count FROM uploaded_datasets"
+            )
+            cols = [d.name for d in cur.description]
+            rows = [dict(zip(cols, row)) for row in cur.fetchall()]
     finally:
         conn.close()
 
@@ -51,7 +46,7 @@ def get_uploads_schema_defs() -> list[dict[str, Any]]:
             columns = json.loads(r["columns"])
         except (TypeError, json.JSONDecodeError):
             columns = []
-        # Normalise the stored SQLite types into the retriever's lowercase form.
+        # Normalise the stored Postgres types into the retriever's lowercase form.
         norm_cols = [
             {"name": c["name"], "type": str(c.get("type", "text")).lower()}
             for c in columns

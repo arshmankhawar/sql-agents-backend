@@ -29,9 +29,12 @@ QUERY_TTL_SECONDS: int = int(os.getenv("QUERY_TTL_SECONDS", "120"))
 # Seconds to keep completed results in the shared result cache
 RESULT_CACHE_TTL_SECONDS: int = int(os.getenv("RESULT_CACHE_TTL_SECONDS", "3600"))
 
-# ── SQLite databases ──────────────────────────────────────────────────────────
-# Directory containing the unified database file (analytics.db)
-SQLITE_DB_PATH: str = os.getenv("SQLITE_DB_PATH", "./db")
+# ── PostgreSQL ────────────────────────────────────────────────────────────────
+# DSN for the unified database (replaces the old SQLITE_DB_PATH / analytics.db
+# file). Matches the docker-compose.yml defaults for local dev.
+DATABASE_URL: str = os.getenv(
+    "DATABASE_URL", "postgresql://arshmank:arshmank@localhost:5432/sql_agents"
+)
 
 # ── Schema Retrieval ──────────────────────────────────────────────────────────
 SCHEMA_INDEX_PATH: str = os.getenv("SCHEMA_INDEX_PATH", "./schema_index")
