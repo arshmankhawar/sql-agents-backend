@@ -9,16 +9,24 @@ Architecture:
   - _sse_generator() drains the queue and yields formatted SSE lines until the None sentinel.
   - StreamingResponse wraps the generator with media_type="text/event-stream".
   - If the client disconnects mid-stream, the generator's finally block cancels the pipeline Task.
+
+Top-level routing (guard -> direct reply | full pipeline) is a tiny LangGraph
+StateGraph with a genuine conditional edge: the guard's data_query vs.
+chitchat/refuse verdict is a static two-way branch decided once per request,
+which is exactly what add_conditional_edges is for (unlike the per-task DAG
+in dag/executor.py, whose dependency structure is dynamic and needs
+finer-grained gating than a superstep-batched edge can give it).
 """
 
 import asyncio
 import json
 import logging
 import time as _time
-from typing import AsyncGenerator
+from typing import Any, AsyncGenerator, TypedDict
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
+from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel
 
 from api.auth.models import UserInfo
@@ -37,49 +45,101 @@ def _sse_line(data: dict) -> str:
     return f"data: {json.dumps(data)}\n\n"
 
 
+class _RouterState(TypedDict):
+    user_request: str
+    queue: asyncio.Queue
+    request_id: str
+    t_plan_start: float
+    verdict: Any
+
+
+async def _guard_node(state: _RouterState) -> dict[str, Any]:
+    from agents.guard import triage
+    from utils.logging_config import new_request_id
+
+    request_id = new_request_id()
+    q: asyncio.Queue = state["queue"]
+    logger.info("[Pipeline] query_received", extra={"phase": "received", "query": state["user_request"]})
+    t_plan_start = _time.perf_counter()
+    q.put_nowait({"event": "planning_started", "ts": _time.time(), "request_id": request_id})
+
+    verdict = await triage(state["user_request"])
+    return {"request_id": request_id, "t_plan_start": t_plan_start, "verdict": verdict}
+
+
+def _route_after_guard(state: _RouterState) -> str:
+    """The conditional edge: data_query -> run the real pipeline, else -> direct reply."""
+    return "run_pipeline" if state["verdict"].is_data_query else "direct_reply"
+
+
+async def _direct_reply_node(state: _RouterState) -> dict[str, Any]:
+    verdict = state["verdict"]
+    logger.info("[Pipeline] short-circuited by guard (intent=%s)", verdict.intent)
+    elapsed = round((_time.perf_counter() - state["t_plan_start"]) * 1000)
+    state["queue"].put_nowait({
+        "event": "synthesis_complete",
+        "ts": _time.time(),
+        "answer": verdict.reply,
+        "charts": [],
+        "sources": [],
+        "stats": {
+            "plan_ms": elapsed, "exec_ms": 0, "synth_ms": 0, "total_ms": elapsed,
+            "db_calls": 0, "cache_hits": 0,
+        },
+    })
+    return {}
+
+
 async def _run_pipeline_into_queue(user_request: str, q: asyncio.Queue) -> None:
     """
     Full pipeline driver. Pushes SSE event dicts into q as the pipeline progresses.
     Always pushes a None sentinel when done (success or failure) so the generator stops.
+
+    Routing into either the direct-reply short-circuit or the real
+    plan/execute/synthesize pipeline happens via a tiny compiled LangGraph
+    graph (guard -> conditional edge -> {direct_reply, run_pipeline} -> END).
     """
+    try:
+        graph = StateGraph(_RouterState)
+        graph.add_node("guard", _guard_node)
+        graph.add_node("direct_reply", _direct_reply_node)
+        graph.add_node("run_pipeline", _run_full_pipeline_node)
+        graph.add_edge(START, "guard")
+        graph.add_conditional_edges("guard", _route_after_guard, {
+            "direct_reply": "direct_reply",
+            "run_pipeline": "run_pipeline",
+        })
+        graph.add_edge("direct_reply", END)
+        graph.add_edge("run_pipeline", END)
+        compiled = graph.compile()
+
+        await compiled.ainvoke({"user_request": user_request, "queue": q})
+    except Exception as exc:
+        logger.exception("[Pipeline] Unhandled error for request %r", user_request)
+        from utils.error_handler import friendly_error
+        q.put_nowait({
+            "event": "error",
+            "ts": _time.time(),
+            "message": friendly_error(exc),
+            "phase": "pipeline",
+        })
+    finally:
+        q.put_nowait(None)  # sentinel — generator will stop
+
+
+async def _run_full_pipeline_node(state: _RouterState) -> dict[str, Any]:
+    """Plan -> execute DAG -> synthesize. Runs only when the guard's
+    conditional edge routes here (a genuine data_query)."""
     from agents.synthesis_agent import SynthesisAgent
     from dag.executor import DAGExecutor
     from planner.parent_planner import ParentOrchestrator
-    from utils.logging_config import new_request_id
 
-    request_id = new_request_id()
-    logger.info(
-        "[Pipeline] query_received",
-        extra={"phase": "received", "query": user_request},
-    )
+    user_request = state["user_request"]
+    q: asyncio.Queue = state["queue"]
+    request_id = state["request_id"]
+    t_plan_start = state["t_plan_start"]
 
-    t_plan_start = _time.perf_counter()
     try:
-        q.put_nowait({"event": "planning_started", "ts": _time.time(), "request_id": request_id})
-
-        # ── Input guard ──────────────────────────────────────────────────────
-        # One cheap classification gates the expensive pipeline. Greetings/chit-
-        # chat get a direct reply; off-topic or jailbreak attempts are refused —
-        # neither triggers any SQL/RAG tool calls or the synthesis LLM.
-        from agents.guard import triage
-        verdict = await triage(user_request)
-        if not verdict.is_data_query:
-            logger.info("[Pipeline] short-circuited by guard (intent=%s)", verdict.intent)
-            q.put_nowait({
-                "event": "synthesis_complete",
-                "ts": _time.time(),
-                "answer": verdict.reply,
-                "charts": [],
-                "sources": [],
-                "stats": {
-                    "plan_ms": round((_time.perf_counter() - t_plan_start) * 1000),
-                    "exec_ms": 0, "synth_ms": 0,
-                    "total_ms": round((_time.perf_counter() - t_plan_start) * 1000),
-                    "db_calls": 0, "cache_hits": 0,
-                },
-            })
-            return
-
         planner = ParentOrchestrator()
         tasks = await planner.plan_global_dag(user_request)
 
@@ -196,8 +256,7 @@ async def _run_pipeline_into_queue(user_request: str, q: asyncio.Queue) -> None:
             "phase": "pipeline",
             "request_id": request_id,
         })
-    finally:
-        q.put_nowait(None)  # sentinel — generator will stop
+    return {}
 
 
 async def _sse_generator(user_request: str) -> AsyncGenerator[str, None]:
