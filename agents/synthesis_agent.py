@@ -123,7 +123,9 @@ def _format_documents_for_synthesis(results: dict[str, Any]) -> str:
             if not text:
                 continue
             source = chunk.get("filename", "document")
-            sections.append(f"[{source}] {text}")
+            heading = chunk.get("heading")
+            label = f"{source} — {heading}" if heading else source
+            sections.append(f"[{label}] {text}")
 
     if not sections:
         return ""
